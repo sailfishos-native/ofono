@@ -83,7 +83,6 @@ autoreconf --force --install
 
 %configure --disable-static \
     --enable-test \
-    --disable-add-remove-context \
     --disable-rilmodem \
     --disable-isimodem \
     --enable-qmimodem \
