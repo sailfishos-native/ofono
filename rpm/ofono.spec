@@ -83,6 +83,7 @@ autoreconf --force --install
 
 %configure --disable-static \
     --enable-test \
+    --enable-sailfish-bt \
     --disable-rilmodem \
     --disable-isimodem \
     --enable-qmimodem \
