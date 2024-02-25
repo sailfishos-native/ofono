@@ -1,0 +1,58 @@
+commit 4cbb6b59194ebabcade91a58ab44304f28ebf4df
+Author: Slava Monich <slava.monich@jolla.com>
+Date:   Fri Sep 29 21:27:35 2017 +0300
+
+    [ofono] Added __ofono_plugin_foreach()
+    
+    Invokes a callback for each registered plugin. It's needed by debuglog
+    plugin because external plugins have __debug section of their own and
+    debuglog needs access to debug_start and debug_stop of such plugins
+    in order to enable or disable plugin logs.
+
+diff --git a/src/ofono.h b/src/ofono.h
+index 66638168..9f80574c 100644
+--- a/src/ofono.h
++++ b/src/ofono.h
+@@ -104,6 +104,12 @@ void __ofono_watchlist_free(struct ofono_watchlist *watchlist);
+ int __ofono_plugin_init(const char *pattern, const char *exclude);
+ void __ofono_plugin_cleanup(void);
+ 
++void __ofono_plugin_foreach(void (*fn) (struct ofono_plugin_desc *desc,
++			int flags, void *user_data), void *user_data);
++
++#define OFONO_PLUGIN_FLAG_BUILTIN (0x01)
++#define OFONO_PLUGIN_FLAG_ACTIVE  (0x02)
++
+ #include <ofono/modem.h>
+ 
+ typedef void (*ofono_modem_foreach_func)(struct ofono_modem *modem,
+diff --git a/src/plugin.c b/src/plugin.c
+index 2c9c619a..53c3e4d2 100644
+--- a/src/plugin.c
++++ b/src/plugin.c
+@@ -99,6 +99,25 @@ static gboolean check_plugin(struct ofono_plugin_desc *desc,
+ 	return TRUE;
+ }
+ 
++void __ofono_plugin_foreach(void (*fn) (struct ofono_plugin_desc *desc,
++				int flags, void *user_data), void *user_data)
++{
++	GSList *list;
++
++	for (list = plugins; list; list = list->next) {
++		struct ofono_plugin *plugin = list->data;
++		int flags = 0;
++
++		if (!plugin->handle)
++			flags |= OFONO_PLUGIN_FLAG_BUILTIN;
++
++		if (plugin->active)
++			flags |= OFONO_PLUGIN_FLAG_ACTIVE;
++
++		fn(plugin->desc, flags, user_data);
++	}
++}
++
+ #include "builtin.h"
+ 
+ int __ofono_plugin_init(const char *pattern, const char *exclude)
