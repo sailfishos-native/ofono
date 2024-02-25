@@ -1,0 +1,4201 @@
+diff --git a/Makefile.am b/Makefile.am
+index 09c4f3f3..c69cb3cc 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -175,7 +175,7 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
+ 			include/handsfree.h \
+ 			include/handsfree-audio.h include/siri.h \
+ 			include/netmon.h include/lte.h include/ims.h \
+-			include/storage.h
++			include/storage.h include/dbus-access.h
+ 
+ nodist_pkginclude_HEADERS = include/version.h
+ 
+@@ -272,6 +272,11 @@ builtin_modules += udevng
+ builtin_sources += plugins/udevng.c
+ endif
+ 
++if SAILFISH_ACCESS
++builtin_modules += sailfish_access
++builtin_sources += plugins/sailfish_access.c
++endif
++
+ if RILMODEM
+ builtin_sources += $(gril_sources)
+ 
+@@ -682,6 +687,7 @@ src_ofonod_SOURCES = $(builtin_sources) $(gatchat_sources) src/ofono.ver \
+ 			src/private-network.c \
+ 			src/handsfree.c \
+ 			src/handsfree-audio.c src/bluetooth.h \
++			src/dbus-clients.c src/dbus-queue.c src/dbus-access.c \
+ 			src/hfp.h src/siri.c \
+ 			src/netmon.c src/lte.c src/ims.c \
+ 			src/netmonagent.c src/netmonagent.h \
+@@ -969,6 +975,38 @@ unit_test_provision_DEPENDENCIES = $(ell_dependencies) \
+ 					unit/test-provision.db
+ unit_objects += $(unit_test_provision_OBJECTS)
+ 
++unit_test_dbus_clients_SOURCES = unit/test-dbus-clients.c unit/test-dbus.c \
++				src/dbus-clients.c gdbus/object.c \
++				src/dbus.c src/log.c
++unit_test_dbus_clients_CFLAGS =  @DBUS_GLIB_CFLAGS@ $(COVERAGE_OPT) $(AM_CFLAGS)
++unit_test_dbus_clients_LDADD = @DBUS_GLIB_LIBS@ @GLIB_LIBS@ -ldl
++unit_objects += $(unit_test_dbus_clients_OBJECTS)
++unit_tests += unit/test-dbus-clients
++
++unit_test_dbus_queue_SOURCES = unit/test-dbus-queue.c unit/test-dbus.c \
++				src/dbus-queue.c gdbus/object.c \
++				src/dbus.c src/log.c
++unit_test_dbus_queue_CFLAGS =  @DBUS_GLIB_CFLAGS@ $(COVERAGE_OPT) $(AM_CFLAGS)
++unit_test_dbus_queue_LDADD = @DBUS_GLIB_LIBS@ @GLIB_LIBS@ -ldl
++unit_objects += $(unit_test_dbus_queue_OBJECTS)
++unit_tests += unit/test-dbus-queue
++
++if SAILFISH_ACCESS
++unit_test_sailfish_access_SOURCES = unit/test-sailfish_access.c \
++			plugins/sailfish_access.c src/dbus-access.c src/log.c
++unit_test_sailfish_access_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT)
++unit_test_sailfish_access_LDADD = @GLIB_LIBS@ -ldl
++unit_objects += $(unit_test_sailfish_access_OBJECTS)
++unit_tests += unit/test-sailfish_access
++endif
++
++unit_test_dbus_access_SOURCES = unit/test-dbus-access.c src/dbus-access.c \
++			src/log.c
++unit_test_dbus_access_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT)
++unit_test_dbus_access_LDADD = @GLIB_LIBS@ -ldl
++unit_objects += $(unit_test_dbus_access_OBJECTS)
++unit_tests += unit/test-dbus-access
++
+ TESTS = $(unit_tests)
+ 
+ if TOOLS
+diff --git a/configure.ac b/configure.ac
+index 240ae29f..cd173cf5 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -162,6 +162,16 @@ else
+ fi
+ AC_SUBST(DBUS_DATADIR)
+ 
++PKG_CHECK_MODULES(GLIBUTIL, libglibutil >= 1.0.51, dummy=yes,
++			AC_MSG_ERROR(libglibutil >= 1.0.51 is required))
++CFLAGS="$CFLAGS $GLIBUTIL_CFLAGS"
++LIBS="$LIBS $GLIBUTIL_LIBS"
++
++PKG_CHECK_MODULES(DBUS_GLIB, dbus-glib-1, dummy=yes,
++		AC_MSG_ERROR(dbus-glib is required by unit tests))
++		AC_SUBST(DBUS_GLIB_CFLAGS)
++		AC_SUBST(DBUS_GLIB_LIBS)
++
+ AC_ARG_WITH([systemdunitdir], AS_HELP_STRING([--with-systemdunitdir=DIR],
+ 	[path to systemd service directory]), [path_systemdunit=${withval}],
+ 		[path_systemdunit="`$PKG_CONFIG --variable=systemdsystemunitdir systemd`"])
+@@ -276,6 +286,19 @@ AC_ARG_ENABLE(datafiles, AS_HELP_STRING([--disable-datafiles],
+ 					[enable_datafiles=${enableval}])
+ AM_CONDITIONAL(DATAFILES, test "${enable_datafiles}" != "no")
+ 
++AC_ARG_ENABLE(sailfish-access, AS_HELP_STRING([--enable-sailfish-access],
++			[enable Sailfish OS access plugin]),
++			[enable_sailfish_access=${enableval}],
++			[enable_sailfish_access="no"])
++
++AM_CONDITIONAL(SAILFISH_ACCESS, test "${enable_sailfish_access}" != "no")
++if (test "${enable_sailfish_access}" == "yes"); then
++	PKG_CHECK_MODULES(DBUSACCESS, libdbusaccess, dummy=yes,
++				AC_MSG_ERROR(libdbusaccess is required))
++	CFLAGS="$CFLAGS $DBUSACCESS_CFLAGS"
++	LIBS="$LIBS $DBUSACCESS_LIBS"
++fi
++
+ if (test "${prefix}" = "NONE"); then
+ 	dnl no prefix and no localstatedir, so default to /var
+ 	if (test "$localstatedir" = '${prefix}/var'); then
+diff --git a/include/dbus-access.h b/include/dbus-access.h
+new file mode 100644
+index 00000000..c62ce6de
+--- /dev/null
++++ b/include/dbus-access.h
+@@ -0,0 +1,189 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2019-2022 Jolla Ltd.
++ *  Copyright (C) 2020 Open Mobile Platform LLC.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ *  GNU General Public License for more details.
++ */
++
++#ifndef __OFONO_DBUS_ACCESS_H
++#define __OFONO_DBUS_ACCESS_H
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#include <ofono/types.h>
++
++enum ofono_dbus_access {
++	OFONO_DBUS_ACCESS_DENY,       /* Deny access */
++	OFONO_DBUS_ACCESS_ALLOW,      /* Allow access */
++	OFONO_DBUS_ACCESS_DONT_CARE   /* No decision */
++};
++
++enum ofono_dbus_access_intf {
++	OFONO_DBUS_ACCESS_INTF_MESSAGE,       /* org.ofono.Message */
++	OFONO_DBUS_ACCESS_INTF_MESSAGEMGR,    /* org.ofono.MessageManager */
++	OFONO_DBUS_ACCESS_INTF_VOICECALL,     /* org.ofono.VoiceCall */
++	OFONO_DBUS_ACCESS_INTF_VOICECALLMGR,  /* org.ofono.VoiceCallManager */
++	OFONO_DBUS_ACCESS_INTF_CONNCTX,       /* org.ofono.ConnectionContext */
++	OFONO_DBUS_ACCESS_INTF_CONNMGR,       /* org.ofono.ConnectionManager */
++	OFONO_DBUS_ACCESS_INTF_SIMMGR,        /* org.ofono.SimManager */
++	OFONO_DBUS_ACCESS_INTF_MODEM,         /* org.ofono.Modem */
++	OFONO_DBUS_ACCESS_INTF_RADIOSETTINGS, /* org.ofono.RadioSettings */
++	OFONO_DBUS_ACCESS_INTF_STK,           /* org.ofono.SimToolkit */
++	OFONO_DBUS_ACCESS_INTF_OEMRAW,        /* org.ofono.OemRaw */
++	/* Since 1.29+git3 */
++	OFONO_DBUS_ACCESS_INTF_IMS,           /* org.ofono.IpMultimediaSystem */
++	OFONO_DBUS_ACCESS_INTF_COUNT
++};
++
++/* OFONO_DBUS_ACCESS_INTF_MESSAGE */
++enum ofono_dbus_access_message_method {
++	OFONO_DBUS_ACCESS_MESSAGE_CANCEL,
++	OFONO_DBUS_ACCESS_MESSAGE_METHOD_COUNT
++};
++
++/* OFONO_DBUS_ACCESS_INTF_MESSAGEMGR */
++enum ofono_dbus_access_messagemgr_method {
++	OFONO_DBUS_ACCESS_MESSAGEMGR_SEND_MESSAGE,
++	OFONO_DBUS_ACCESS_MESSAGEMGR_SEND_DATA_MESSAGE, /* Since 1.28+git5 */
++	OFONO_DBUS_ACCESS_MESSAGEMGR_METHOD_COUNT
++};
++
++/* OFONO_DBUS_ACCESS_INTF_VOICECALL */
++enum ofono_dbus_access_voicecall_method {
++	OFONO_DBUS_ACCESS_VOICECALL_DEFLECT,
++	OFONO_DBUS_ACCESS_VOICECALL_HANGUP,
++	OFONO_DBUS_ACCESS_VOICECALL_ANSWER,
++	OFONO_DBUS_ACCESS_VOICECALL_METHOD_COUNT
++};
++
++/* OFONO_DBUS_ACCESS_INTF_VOICECALLMGR */
++enum ofono_dbus_access_voicecallmgr_method {
++	OFONO_DBUS_ACCESS_VOICECALLMGR_DIAL,
++	OFONO_DBUS_ACCESS_VOICECALLMGR_TRANSFER,
++	OFONO_DBUS_ACCESS_VOICECALLMGR_SWAP_CALLS,
++	OFONO_DBUS_ACCESS_VOICECALLMGR_RELEASE_AND_ANSWER,
++	OFONO_DBUS_ACCESS_VOICECALLMGR_RELEASE_AND_SWAP,
++	OFONO_DBUS_ACCESS_VOICECALLMGR_HOLD_AND_ANSWER,
++	OFONO_DBUS_ACCESS_VOICECALLMGR_HANGUP_ALL,
++	OFONO_DBUS_ACCESS_VOICECALLMGR_CREATE_MULTIPARTY,
++	OFONO_DBUS_ACCESS_VOICECALLMGR_HANGUP_MULTIPARTY,
++	OFONO_DBUS_ACCESS_VOICECALLMGR_SEND_TONES,
++	OFONO_DBUS_ACCESS_VOICECALLMGR_REGISTER_VOICECALL_AGENT,
++	OFONO_DBUS_ACCESS_VOICECALLMGR_UNREGISTER_VOICECALL_AGENT,
++	OFONO_DBUS_ACCESS_VOICECALLMGR_METHOD_COUNT
++};
++
++/* OFONO_DBUS_ACCESS_INTF_CONNCTX */
++enum ofono_dbus_access_connctx_method {
++	OFONO_DBUS_ACCESS_CONNCTX_SET_PROPERTY,
++	OFONO_DBUS_ACCESS_CONNCTX_PROVISION_CONTEXT,
++	OFONO_DBUS_ACCESS_CONNCTX_METHOD_COUNT
++};
++
++/* OFONO_DBUS_ACCESS_INTF_CONNMGR */
++enum ofono_dbus_access_connmgr_method {
++	OFONO_DBUS_ACCESS_CONNMGR_SET_PROPERTY,
++	OFONO_DBUS_ACCESS_CONNMGR_DEACTIVATE_ALL,
++	OFONO_DBUS_ACCESS_CONNMGR_RESET_CONTEXTS,
++	OFONO_DBUS_ACCESS_CONNMGR_METHOD_COUNT
++};
++
++/* OFONO_DBUS_ACCESS_INTF_SIMMGR */
++enum ofono_dbus_access_simmgr_method {
++	OFONO_DBUS_ACCESS_SIMMGR_SET_PROPERTY,
++	OFONO_DBUS_ACCESS_SIMMGR_CHANGE_PIN,
++	OFONO_DBUS_ACCESS_SIMMGR_ENTER_PIN,
++	OFONO_DBUS_ACCESS_SIMMGR_RESET_PIN,
++	OFONO_DBUS_ACCESS_SIMMGR_LOCK_PIN,
++	OFONO_DBUS_ACCESS_SIMMGR_UNLOCK_PIN,
++	OFONO_DBUS_ACCESS_SIMMGR_METHOD_COUNT
++};
++
++/* OFONO_DBUS_ACCESS_INTF_MODEM */
++enum ofono_dbus_access_modem_method {
++	OFONO_DBUS_ACCESS_MODEM_SET_PROPERTY,
++	OFONO_DBUS_ACCESS_MODEM_METHOD_COUNT
++};
++
++/* OFONO_DBUS_ACCESS_INTF_RADIOSETTINGS */
++enum ofono_dbus_access_radiosettings_method {
++	OFONO_DBUS_ACCESS_RADIOSETTINGS_SET_PROPERTY,
++	OFONO_DBUS_ACCESS_RADIOSETTINGS_METHOD_COUNT
++};
++
++/* OFONO_DBUS_ACCESS_INTF_STK */
++enum ofono_dbus_access_stk_method {
++	OFONO_DBUS_ACCESS_STK_REGISTER_AGENT,
++	OFONO_DBUS_ACCESS_STK_METHOD_COUNT
++};
++
++/* OFONO_DBUS_ACCESS_INTF_OEMRAW */
++enum ofono_dbus_access_oemraw_method {
++	OFONO_DBUS_ACCESS_OEMRAW_SEND,
++	OFONO_DBUS_ACCESS_OEMRAW_METHOD_COUNT
++};
++
++/* OFONO_DBUS_ACCESS_INTF_IMS */
++enum ofono_dbus_access_ims_method {
++	/* Since 1.29+git3 */
++	OFONO_DBUS_ACCESS_IMS_SET_PROPERTY,
++	OFONO_DBUS_ACCESS_IMS_REGISTER,
++	OFONO_DBUS_ACCESS_IMS_UNREGISTER,
++	OFONO_DBUS_ACCESS_IMS_METHOD_COUNT
++};
++
++#define OFONO_DBUS_ACCESS_PRIORITY_LOW     (-100)
++#define OFONO_DBUS_ACCESS_PRIORITY_DEFAULT (0)
++#define OFONO_DBUS_ACCESS_PRIORITY_HIGH    (100)
++
++struct ofono_dbus_access_plugin {
++	const char *name;
++	int priority;
++	enum ofono_dbus_access (*method_access)(const char *sender,
++				enum ofono_dbus_access_intf intf,
++				int method, const char *arg);
++
++	void (*_reserved[10])(void);
++
++	/* api_level will remain zero (and ignored) until we run out of
++	 * the above placeholders. */
++	int api_level;
++};
++
++int ofono_dbus_access_plugin_register
++			(const struct ofono_dbus_access_plugin *plugin);
++void ofono_dbus_access_plugin_unregister
++			(const struct ofono_dbus_access_plugin *plugin);
++
++const char *ofono_dbus_access_intf_name(enum ofono_dbus_access_intf intf);
++const char *ofono_dbus_access_method_name(enum ofono_dbus_access_intf intf,
++								int method);
++
++/* Since 1.24+git2 */
++ofono_bool_t ofono_dbus_access_method_allowed(const char *sender,
++	enum ofono_dbus_access_intf iface, int method, const char *arg);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* __OFONO_DBUS_ACCESS_H */
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/include/dbus-clients.h b/include/dbus-clients.h
+new file mode 100644
+index 00000000..4811b424
+--- /dev/null
++++ b/include/dbus-clients.h
+@@ -0,0 +1,55 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2021 Jolla Ltd.
++ *  Copyright (C) 2021 Open Mobile Platform LLC.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ */
++
++#ifndef OFONO_DBUS_CLIENTS_H
++#define OFONO_DBUS_CLIENTS_H
++
++#include <ofono/types.h>
++#include <ofono/dbus.h>
++
++/* Since mer/1.23+git31 */
++
++struct ofono_dbus_clients;
++
++typedef void (*ofono_dbus_clients_notify_func)(const char *name,
++							void *user_data);
++
++struct ofono_dbus_clients *ofono_dbus_clients_new(DBusConnection *conn,
++		ofono_dbus_clients_notify_func notify, void *user_data);
++void ofono_dbus_clients_free(struct ofono_dbus_clients *clients);
++
++unsigned int ofono_dbus_clients_count(struct ofono_dbus_clients *clients);
++
++ofono_bool_t ofono_dbus_clients_add(struct ofono_dbus_clients *clients,
++							const char *name);
++ofono_bool_t ofono_dbus_clients_remove(struct ofono_dbus_clients *clients,
++							const char *name);
++
++void ofono_dbus_clients_signal(struct ofono_dbus_clients *clients,
++							DBusMessage *signal);
++void ofono_dbus_clients_signal_property_changed(struct ofono_dbus_clients *dc,
++		const char *path, const char *interface, const char *name,
++		int type, const void *value);
++
++#endif /* OFONO_DBUS_CLIENTS_H */
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/include/dbus.h b/include/dbus.h
+index a500db76..984a9e9b 100644
+--- a/include/dbus.h
++++ b/include/dbus.h
+@@ -101,6 +101,12 @@ int ofono_dbus_signal_dict_property_changed(DBusConnection *conn,
+ 						const char *name, int type,
+ 						const void *value);
+ 
++/* Since mer/1.23+git31 */
++DBusMessage *ofono_dbus_signal_new_property_changed(const char *path,
++					const char *interface,
++					const char *name,
++					int type, const void *value);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/plugins/sailfish_access.c b/plugins/sailfish_access.c
+new file mode 100644
+index 00000000..08dca386
+--- /dev/null
++++ b/plugins/sailfish_access.c
+@@ -0,0 +1,257 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2019 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ *  GNU General Public License for more details.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
++#define OFONO_API_SUBJECT_TO_CHANGE
++
++#include <ofono/dbus-access.h>
++#include <ofono/plugin.h>
++#include <ofono/log.h>
++
++#include <dbusaccess_policy.h>
++#include <dbusaccess_peer.h>
++
++struct sailfish_access_intf {
++	const char *name;
++};
++
++struct sailfish_access_intf_policy {
++	const char* intf;
++	int n_methods;
++	DAPolicy* policy[1];
++};
++
++#define OFONO_BUS DA_BUS_SYSTEM
++
++#define COMMON_GROUP "Common"
++#define DEFAULT_POLICY "DefaultAccess"
++#define DEFAULT_INTF_POLICY "*"
++
++/* File name is external for unit testing */
++const char *sailfish_access_config_file = "/etc/ofono/dbusaccess.conf";
++static GHashTable* access_table = NULL;
++static const char *default_access_policy = DA_POLICY_VERSION "; "
++	"* = deny; "
++	"group(sailfish-radio) | group(privileged) = allow";
++
++/*
++ * Configuration is loaded from /etc/ofono/dbusaccess.conf
++ * If configuration is missing, default access rules are used.
++ * Syntax goes like this:
++ *
++ * [Common]
++ * DefaultAccess = <default rules for all controlled interfaces/methods>
++ *
++ * [InterfaceX]
++ * * = <default access rules for all methods in this interface>
++ * MethodY = <access rule for this method>
++ */
++
++static void sailfish_access_policy_free(gpointer user_data)
++{
++	da_policy_unref((DAPolicy*)user_data);
++}
++
++static void sailfish_access_load_config_intf(GKeyFile *config,
++		enum ofono_dbus_access_intf intf, DAPolicy* default_policy)
++{
++	struct sailfish_access_intf_policy *intf_policy;
++	const char *group = ofono_dbus_access_intf_name(intf);
++	const char *method;
++	DAPolicy *default_intf_policy = NULL;
++	char *default_intf_policy_spec = g_key_file_get_string(config, group,
++						DEFAULT_INTF_POLICY, NULL);
++	GPtrArray *policies = g_ptr_array_new_with_free_func
++						(sailfish_access_policy_free);
++	int i = 0;
++
++	/* Parse the default policy for this interface */
++	if (default_intf_policy_spec) {
++		default_intf_policy = da_policy_new(default_intf_policy_spec);
++		if (default_intf_policy) {
++			default_policy = default_intf_policy;
++		} else {
++			ofono_warn("Failed to parse default %s rule \"%s\"",
++					group, default_intf_policy_spec);
++		}
++		g_free(default_intf_policy_spec);
++	}
++
++	/* Parse individual policies for each method */
++	while ((method = ofono_dbus_access_method_name(intf, i++)) != NULL) {
++		DAPolicy* policy;
++		char *spec = g_key_file_get_string(config, group, method, NULL);
++
++		if (spec) {
++			policy = da_policy_new(spec);
++			if (!policy) {
++				ofono_warn("Failed to parse %s.%s rule \"%s\"",
++							group, method, spec);
++				policy = da_policy_ref(default_policy);
++			}
++		} else {
++			policy = da_policy_ref(default_policy);
++		}
++		g_ptr_array_add(policies, policy);
++		g_free(spec);
++	}
++
++	/* Allocate storage for interface policy information */
++	intf_policy = g_malloc0(
++		G_STRUCT_OFFSET(struct sailfish_access_intf_policy, policy) +
++		sizeof(DAPolicy*) * policies->len);
++	intf_policy->intf = group;
++	intf_policy->n_methods = policies->len;
++
++	for (i = 0; i < intf_policy->n_methods; i++) {
++		intf_policy->policy[i] = da_policy_ref(policies->pdata[i]);
++	}
++
++	da_policy_unref(default_intf_policy);
++	g_hash_table_insert(access_table, GINT_TO_POINTER(intf), intf_policy);
++	g_ptr_array_free(policies, TRUE);
++}
++
++static void sailfish_access_load_config()
++{
++	GKeyFile *config = g_key_file_new();
++	char *default_policy_spec;
++	DAPolicy* default_policy;
++	int i;
++
++	/*
++	 * Try to load config file, in case of error just make sure
++	 * that it config is empty.
++	 */
++	if (g_file_test(sailfish_access_config_file, G_FILE_TEST_EXISTS)) {
++		if (g_key_file_load_from_file(config,
++					sailfish_access_config_file,
++					G_KEY_FILE_NONE, NULL)) {
++			DBG("Loading D-Bus access rules from %s",
++						sailfish_access_config_file);
++		} else {
++			g_key_file_unref(config);
++			config = g_key_file_new();
++		}
++	}
++
++	default_policy_spec = g_key_file_get_string(config, COMMON_GROUP,
++						DEFAULT_POLICY, NULL);
++	default_policy = da_policy_new(default_policy_spec);
++
++	if (!default_policy) {
++		default_policy = da_policy_new(default_access_policy);
++		if (!default_policy) {
++			ofono_warn("Failed to parse default D-Bus policy "
++						"\"%s\" (missing group?)",
++						default_access_policy);
++		}
++	}
++
++	for (i = 0; i < OFONO_DBUS_ACCESS_INTF_COUNT; i++) {
++		sailfish_access_load_config_intf(config, i, default_policy);
++	}
++
++	da_policy_unref(default_policy);
++	g_free(default_policy_spec);
++	g_key_file_unref(config);
++}
++
++static void sailfish_access_intf_free(gpointer user_data)
++{
++	struct sailfish_access_intf_policy* intf = user_data;
++	int i;
++
++	for (i = 0; i < intf->n_methods; i++) {
++		da_policy_unref(intf->policy[i]);
++	}
++	g_free(intf);
++}
++
++static enum ofono_dbus_access sailfish_access_method_access(const char *sender,
++				enum ofono_dbus_access_intf intf,
++				int method, const char *arg)
++{
++	struct sailfish_access_intf_policy *intf_policy = g_hash_table_lookup
++		(access_table, GINT_TO_POINTER(intf));
++
++	if (intf_policy && method >= 0 && method < intf_policy->n_methods) {
++		DAPeer *peer = da_peer_get(OFONO_BUS, sender);
++
++		if (peer) {
++			switch (da_policy_check(intf_policy->policy[method],
++				&peer->cred, 0, arg, DA_ACCESS_ALLOW)) {
++			case DA_ACCESS_ALLOW:
++				return OFONO_DBUS_ACCESS_ALLOW;
++			case DA_ACCESS_DENY:
++				return OFONO_DBUS_ACCESS_DENY;
++			}
++		} else {
++			/*
++			 * Deny access to unknown peers. Those are
++			 * already gone from the bus and won't be
++			 * able to receive our reply anyway.
++			 */
++			return OFONO_DBUS_ACCESS_DENY;
++		}
++	}
++	return OFONO_DBUS_ACCESS_DONT_CARE;
++}
++
++static const struct ofono_dbus_access_plugin sailfish_access_plugin = {
++	.name = "Sailfish D-Bus access",
++	.priority = OFONO_DBUS_ACCESS_PRIORITY_DEFAULT,
++	.method_access = sailfish_access_method_access
++};
++
++static int sailfish_access_init(void)
++{
++	int ret;
++
++	DBG("");
++	ret = ofono_dbus_access_plugin_register(&sailfish_access_plugin);
++	if (ret == 0) {
++		access_table = g_hash_table_new_full(g_direct_hash,
++			g_direct_equal, NULL, sailfish_access_intf_free);
++		sailfish_access_load_config();
++	}
++	return ret;
++}
++
++static void sailfish_access_exit(void)
++{
++	DBG("");
++	ofono_dbus_access_plugin_unregister(&sailfish_access_plugin);
++	da_peer_flush(OFONO_BUS, NULL);
++	if (access_table) {
++		g_hash_table_destroy(access_table);
++		access_table = NULL;
++	}
++}
++
++OFONO_PLUGIN_DEFINE(sailfish_access, "Sailfish D-Bus access plugin", VERSION,
++			OFONO_PLUGIN_PRIORITY_DEFAULT,
++			sailfish_access_init, sailfish_access_exit)
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/src/dbus-access.c b/src/dbus-access.c
+new file mode 100644
+index 00000000..11769734
+--- /dev/null
++++ b/src/dbus-access.c
+@@ -0,0 +1,289 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2019-2022 Jolla Ltd.
++ *  Copyright (C) 2020 Open Mobile Platform LLC.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ *  GNU General Public License for more details.
++ */
++
++#include "ofono.h"
++
++#include <errno.h>
++#include <string.h>
++
++static GSList *dbus_access_plugins = NULL;
++
++const char *ofono_dbus_access_intf_name(enum ofono_dbus_access_intf intf)
++{
++	switch (intf) {
++	case OFONO_DBUS_ACCESS_INTF_MESSAGE:
++		return OFONO_MESSAGE_INTERFACE;
++	case OFONO_DBUS_ACCESS_INTF_MESSAGEMGR:
++		return OFONO_MESSAGE_MANAGER_INTERFACE;
++	case OFONO_DBUS_ACCESS_INTF_VOICECALL:
++		return OFONO_VOICECALL_INTERFACE;
++	case OFONO_DBUS_ACCESS_INTF_VOICECALLMGR:
++		return OFONO_VOICECALL_MANAGER_INTERFACE;
++	case OFONO_DBUS_ACCESS_INTF_CONNCTX:
++		return OFONO_CONNECTION_CONTEXT_INTERFACE;
++	case OFONO_DBUS_ACCESS_INTF_CONNMGR:
++		return OFONO_CONNECTION_MANAGER_INTERFACE;
++	case OFONO_DBUS_ACCESS_INTF_SIMMGR:
++		return OFONO_SIM_MANAGER_INTERFACE;
++	case OFONO_DBUS_ACCESS_INTF_MODEM:
++		return OFONO_MODEM_INTERFACE;
++	case OFONO_DBUS_ACCESS_INTF_RADIOSETTINGS:
++		return OFONO_RADIO_SETTINGS_INTERFACE;
++	case OFONO_DBUS_ACCESS_INTF_STK:
++		return OFONO_STK_INTERFACE;
++	case OFONO_DBUS_ACCESS_INTF_OEMRAW:
++		return "org.ofono.OemRaw";
++	case OFONO_DBUS_ACCESS_INTF_IMS:
++		return OFONO_IMS_INTERFACE;
++	case OFONO_DBUS_ACCESS_INTF_COUNT:
++		break;
++	}
++	return NULL;
++}
++
++const char *ofono_dbus_access_method_name(enum ofono_dbus_access_intf intf,
++								int method)
++{
++	switch (intf) {
++	case OFONO_DBUS_ACCESS_INTF_MESSAGE:
++		switch ((enum ofono_dbus_access_message_method)method) {
++		case OFONO_DBUS_ACCESS_MESSAGE_CANCEL:
++			return "Cancel";
++		case OFONO_DBUS_ACCESS_MESSAGE_METHOD_COUNT:
++			break;
++		}
++		break;
++	case OFONO_DBUS_ACCESS_INTF_MESSAGEMGR:
++		switch ((enum ofono_dbus_access_messagemgr_method)method) {
++		case OFONO_DBUS_ACCESS_MESSAGEMGR_SEND_MESSAGE:
++			return "SendMessage";
++		case OFONO_DBUS_ACCESS_MESSAGEMGR_SEND_DATA_MESSAGE:
++			return "SendDataMessage";
++		case OFONO_DBUS_ACCESS_MESSAGEMGR_METHOD_COUNT:
++			break;
++		}
++		break;
++	case OFONO_DBUS_ACCESS_INTF_VOICECALL:
++		switch ((enum ofono_dbus_access_voicecall_method)method) {
++		case OFONO_DBUS_ACCESS_VOICECALL_DEFLECT:
++			return "Deflect";
++		case OFONO_DBUS_ACCESS_VOICECALL_HANGUP:
++			return "Hangup";
++		case OFONO_DBUS_ACCESS_VOICECALL_ANSWER:
++			return "Answer";
++		case OFONO_DBUS_ACCESS_VOICECALL_METHOD_COUNT:
++			break;
++		}
++		break;
++	case OFONO_DBUS_ACCESS_INTF_VOICECALLMGR:
++		switch ((enum ofono_dbus_access_voicecallmgr_method)method) {
++		case OFONO_DBUS_ACCESS_VOICECALLMGR_DIAL:
++			return "Dial";
++		case OFONO_DBUS_ACCESS_VOICECALLMGR_TRANSFER:
++			return "Transfer";
++		case OFONO_DBUS_ACCESS_VOICECALLMGR_SWAP_CALLS:
++			return "SwapCalls";
++		case OFONO_DBUS_ACCESS_VOICECALLMGR_RELEASE_AND_ANSWER:
++			return "ReleaseAndAnswer";
++		case OFONO_DBUS_ACCESS_VOICECALLMGR_RELEASE_AND_SWAP:
++			return "ReleaseAndSwap";
++		case OFONO_DBUS_ACCESS_VOICECALLMGR_HOLD_AND_ANSWER:
++			return "HoldAndAnswer";
++		case OFONO_DBUS_ACCESS_VOICECALLMGR_HANGUP_ALL:
++			return "HangupAll";
++		case OFONO_DBUS_ACCESS_VOICECALLMGR_CREATE_MULTIPARTY:
++			return "CreateMultiparty";
++		case OFONO_DBUS_ACCESS_VOICECALLMGR_HANGUP_MULTIPARTY:
++			return "HangupMultiparty";
++		case OFONO_DBUS_ACCESS_VOICECALLMGR_SEND_TONES:
++			return "SendTones";
++		case OFONO_DBUS_ACCESS_VOICECALLMGR_REGISTER_VOICECALL_AGENT:
++			return "RegisterVoicecallAgent";
++		case OFONO_DBUS_ACCESS_VOICECALLMGR_UNREGISTER_VOICECALL_AGENT:
++			return "UnregisterVoicecallAgent";
++		case OFONO_DBUS_ACCESS_VOICECALLMGR_METHOD_COUNT:
++			break;
++		}
++		break;
++	case OFONO_DBUS_ACCESS_INTF_CONNCTX:
++		switch ((enum ofono_dbus_access_connctx_method)method) {
++		case OFONO_DBUS_ACCESS_CONNCTX_SET_PROPERTY:
++			return "SetProperty";
++		case OFONO_DBUS_ACCESS_CONNCTX_PROVISION_CONTEXT:
++			return "ProvisionContext";
++		case OFONO_DBUS_ACCESS_CONNCTX_METHOD_COUNT:
++			break;
++		}
++		break;
++	case OFONO_DBUS_ACCESS_INTF_CONNMGR:
++		switch ((enum ofono_dbus_access_connmgr_method)method) {
++		case OFONO_DBUS_ACCESS_CONNMGR_SET_PROPERTY:
++			return "SetProperty";
++		case OFONO_DBUS_ACCESS_CONNMGR_DEACTIVATE_ALL:
++			return "DeactivateAll";
++		case OFONO_DBUS_ACCESS_CONNMGR_RESET_CONTEXTS:
++			return "ResetContexts";
++		case OFONO_DBUS_ACCESS_CONNMGR_METHOD_COUNT:
++			break;
++		}
++		break;
++	case OFONO_DBUS_ACCESS_INTF_SIMMGR:
++		switch ((enum ofono_dbus_access_simmgr_method)method) {
++		case OFONO_DBUS_ACCESS_SIMMGR_SET_PROPERTY:
++			return "SetProperty";
++		case OFONO_DBUS_ACCESS_SIMMGR_CHANGE_PIN:
++			return "ChangePin";
++		case OFONO_DBUS_ACCESS_SIMMGR_ENTER_PIN:
++			return "EnterPin";
++		case OFONO_DBUS_ACCESS_SIMMGR_RESET_PIN:
++			return "ResetPin";
++		case OFONO_DBUS_ACCESS_SIMMGR_LOCK_PIN:
++			return "LockPin";
++		case OFONO_DBUS_ACCESS_SIMMGR_UNLOCK_PIN:
++			return "UnlockPin";
++		case OFONO_DBUS_ACCESS_SIMMGR_METHOD_COUNT:
++			break;
++		}
++		break;
++	case OFONO_DBUS_ACCESS_INTF_MODEM:
++		switch ((enum ofono_dbus_access_modem_method)method) {
++		case OFONO_DBUS_ACCESS_MODEM_SET_PROPERTY:
++			return "SetProperty";
++		case OFONO_DBUS_ACCESS_MODEM_METHOD_COUNT:
++			break;
++		}
++		break;
++	case OFONO_DBUS_ACCESS_INTF_RADIOSETTINGS:
++		switch ((enum ofono_dbus_access_radiosettings_method)method) {
++		case OFONO_DBUS_ACCESS_RADIOSETTINGS_SET_PROPERTY:
++			return "SetProperty";
++		case OFONO_DBUS_ACCESS_RADIOSETTINGS_METHOD_COUNT:
++			break;
++		}
++		break;
++	case OFONO_DBUS_ACCESS_INTF_STK:
++		switch ((enum ofono_dbus_access_stk_method)method) {
++		case OFONO_DBUS_ACCESS_STK_REGISTER_AGENT:
++			return "RegisterAgent";
++		case OFONO_DBUS_ACCESS_STK_METHOD_COUNT:
++			break;
++		}
++		break;
++	case OFONO_DBUS_ACCESS_INTF_OEMRAW:
++		switch ((enum ofono_dbus_access_oemraw_method)method) {
++		case OFONO_DBUS_ACCESS_OEMRAW_SEND:
++			return "Send";
++		case OFONO_DBUS_ACCESS_OEMRAW_METHOD_COUNT:
++			break;
++		}
++		break;
++	case OFONO_DBUS_ACCESS_INTF_IMS:
++		switch ((enum ofono_dbus_access_ims_method)method) {
++		case OFONO_DBUS_ACCESS_IMS_SET_PROPERTY:
++			return "SetProperty";
++		case OFONO_DBUS_ACCESS_IMS_REGISTER:
++			return "Register";
++		case OFONO_DBUS_ACCESS_IMS_UNREGISTER:
++			return "Unregister";
++		case OFONO_DBUS_ACCESS_IMS_METHOD_COUNT:
++			break;
++		}
++		break;
++	case OFONO_DBUS_ACCESS_INTF_COUNT:
++		break;
++	}
++	return NULL;
++}
++
++ofono_bool_t ofono_dbus_access_method_allowed(const char *sender,
++					enum ofono_dbus_access_intf intf,
++					int method, const char *arg)
++{
++	GSList *l = dbus_access_plugins;
++
++	while (l) {
++		GSList *next = l->next;
++		const struct ofono_dbus_access_plugin *plugin = l->data;
++
++		switch (plugin->method_access(sender, intf, method, arg)) {
++		case OFONO_DBUS_ACCESS_DENY:
++			return FALSE;
++		case OFONO_DBUS_ACCESS_ALLOW:
++			return TRUE;
++		case OFONO_DBUS_ACCESS_DONT_CARE:
++			break;
++		}
++
++		l = next;
++	}
++
++	return TRUE;
++}
++
++/**
++ * Returns 0 if both are equal;
++ * <0 if a comes before b;
++ * >0 if a comes after b.
++ */
++static gint ofono_dbus_access_plugin_sort(gconstpointer a, gconstpointer b)
++{
++	const struct ofono_dbus_access_plugin *a_plugin = a;
++	const struct ofono_dbus_access_plugin *b_plugin = b;
++
++	if (a_plugin->priority > b_plugin->priority) {
++		/* a comes before b */
++		return -1;
++	} else if (a_plugin->priority < b_plugin->priority) {
++		/* a comes after b */
++		return 1;
++	} else {
++		/* Whatever, as long as the sort is stable */
++		return strcmp(a_plugin->name, b_plugin->name);
++	}
++}
++
++int ofono_dbus_access_plugin_register
++			(const struct ofono_dbus_access_plugin *plugin)
++{
++	if (!plugin || !plugin->name) {
++		return -EINVAL;
++	} else if (g_slist_find(dbus_access_plugins, plugin)) {
++		return -EALREADY;
++	} else {
++		DBG("%s", plugin->name);
++		dbus_access_plugins = g_slist_insert_sorted(dbus_access_plugins,
++				(void*)plugin, ofono_dbus_access_plugin_sort);
++		return 0;
++	}
++}
++
++void ofono_dbus_access_plugin_unregister
++			(const struct ofono_dbus_access_plugin *plugin)
++{
++	if (plugin) {
++		DBG("%s", plugin->name);
++		dbus_access_plugins = g_slist_remove(dbus_access_plugins,
++								plugin);
++	}
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/src/dbus-clients.c b/src/dbus-clients.c
+new file mode 100644
+index 00000000..778186c2
+--- /dev/null
++++ b/src/dbus-clients.c
+@@ -0,0 +1,182 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2017-2018 Jolla Ltd.
++ *  Copyright (C) 2020 Open Mobile Platform LLC.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ */
++
++#include <ofono/dbus-clients.h>
++#include <ofono/gdbus.h>
++#include <ofono/log.h>
++
++struct ofono_dbus_client {
++	struct ofono_dbus_clients *clients;
++	char *name;
++	unsigned int watch_id;
++};
++
++struct ofono_dbus_clients {
++	DBusConnection* conn;
++	GHashTable* table;
++	ofono_dbus_clients_notify_func notify;
++	void *user_data;
++};
++
++/* Compatible with GDestroyNotify */
++static void ofono_dbus_client_free(struct ofono_dbus_client *client)
++{
++	struct ofono_dbus_clients *clients = client->clients;
++
++	/* Callers make sure that client parameter is not NULL */
++	if (client->watch_id) {
++		g_dbus_remove_watch(clients->conn, client->watch_id);
++	}
++	g_free(client->name);
++	g_slice_free(struct ofono_dbus_client, client);
++}
++
++static void ofono_dbus_clients_disconnect_notify(DBusConnection *connection,
++							void *user_data)
++{
++	struct ofono_dbus_client *client = user_data;
++	struct ofono_dbus_clients *self = client->clients;
++	char *name = client->name;
++
++	/*
++	 * Steal the name so that it doesn't get freed by
++	 * ofono_dbus_client_free(). We want to pass it to
++	 * the callback but first we need to delete client's
++	 * entry from the hashtable.
++	 */
++	client->name = NULL;
++	DBG("%s is gone", name);
++	g_hash_table_remove(self->table, name);
++	if (self->notify) {
++		self->notify(name, self->user_data);
++	}
++	g_free(name);
++}
++
++struct ofono_dbus_clients *ofono_dbus_clients_new(DBusConnection *conn,
++		ofono_dbus_clients_notify_func notify, void *user_data)
++{
++	if (conn) {
++		struct ofono_dbus_clients *self =
++			g_slice_new0(struct ofono_dbus_clients);
++
++		self->conn = dbus_connection_ref(conn);
++		self->table = g_hash_table_new_full(g_str_hash, g_str_equal,
++				NULL, (GDestroyNotify) ofono_dbus_client_free);
++		self->notify = notify;
++		self->user_data = user_data;
++		return self;
++	}
++	return NULL;
++}
++
++void ofono_dbus_clients_free(struct ofono_dbus_clients *self)
++{
++	if (self) {
++		g_hash_table_destroy(self->table);
++		dbus_connection_unref(self->conn);
++		g_slice_free(struct ofono_dbus_clients, self);
++	}
++}
++
++unsigned int ofono_dbus_clients_count(struct ofono_dbus_clients *self)
++{
++	return self ? g_hash_table_size(self->table) : 0;
++}
++
++ofono_bool_t ofono_dbus_clients_add(struct ofono_dbus_clients *self,
++							const char *name)
++{
++	if (self && name) {
++		struct ofono_dbus_client *client =
++				g_slice_new0(struct ofono_dbus_client);
++
++		client->clients = self;
++		client->name = g_strdup(name);
++		client->watch_id = g_dbus_add_disconnect_watch(self->conn,
++			client->name, ofono_dbus_clients_disconnect_notify,
++			client, NULL);
++
++		if (client->watch_id) {
++			DBG("%s is registered", client->name);
++			g_hash_table_replace(self->table, (gpointer)
++				client->name, client);
++			return TRUE;
++		} else {
++			DBG("failed to register %s", client->name);
++			ofono_dbus_client_free(client);
++		}
++	}
++	return FALSE;
++}
++
++ofono_bool_t ofono_dbus_clients_remove(struct ofono_dbus_clients *self,
++							const char *name)
++{
++	return self && name && g_hash_table_remove(self->table, name);
++}
++
++void ofono_dbus_clients_signal(struct ofono_dbus_clients *self,
++							DBusMessage *signal)
++{
++	if (self && signal && g_hash_table_size(self->table)) {
++		GHashTableIter it;
++		gpointer key;
++		const char *last_name = NULL;
++
++		g_hash_table_iter_init(&it, self->table);
++		g_hash_table_iter_next(&it, &key, NULL);
++		last_name = key;
++
++		while (g_hash_table_iter_next(&it, &key, NULL)) {
++			DBusMessage *copy = dbus_message_copy(signal);
++
++			dbus_message_set_destination(copy, key);
++			g_dbus_send_message(self->conn, copy);
++		}
++
++		/*
++		 * The last one. Note that g_dbus_send_message() unrefs
++		 * the message, we need compensate for that by adding a
++		 * reference. The caller still owns the message when this
++		 * function returns.
++		 */
++		dbus_message_ref(signal);
++		dbus_message_set_destination(signal, last_name);
++		g_dbus_send_message(self->conn, signal);
++	}
++}
++
++void ofono_dbus_clients_signal_property_changed(struct ofono_dbus_clients *self,
++		const char *path, const char *interface, const char *name,
++		int type, const void *value)
++{
++	if (self && g_hash_table_size(self->table)) {
++		DBusMessage *sig = ofono_dbus_signal_new_property_changed(path,
++			interface, name, type, value);
++
++		ofono_dbus_clients_signal(self, sig);
++		dbus_message_unref(sig);
++	}
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/src/dbus-queue.c b/src/dbus-queue.c
+new file mode 100644
+index 00000000..383a5336
+--- /dev/null
++++ b/src/dbus-queue.c
+@@ -0,0 +1,299 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2017 Jolla Ltd. All rights reserved.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ */
++
++#include "dbus-queue.h"
++
++#include <gdbus.h>
++
++#include "ofono.h"
++
++struct ofono_dbus_queue {
++	struct ofono_dbus_queue_request *requests;
++};
++
++struct ofono_dbus_queue_request {
++	struct ofono_dbus_queue_request *next;
++	ofono_dbus_cb_t fn;
++	DBusMessage *msg;
++	void *data;
++};
++
++struct ofono_dbus_queue *__ofono_dbus_queue_new()
++{
++	return g_new0(struct ofono_dbus_queue, 1);
++}
++
++static struct ofono_dbus_queue_request *__ofono_dbus_queue_req_new
++			(ofono_dbus_cb_t fn, DBusMessage *msg, void *data)
++{
++	struct ofono_dbus_queue_request *req =
++		g_slice_new0(struct ofono_dbus_queue_request);
++
++	req->msg = dbus_message_ref(msg);
++	req->data = data;
++	req->fn = fn;
++	return req;
++}
++
++static void __ofono_dbus_queue_req_free(struct ofono_dbus_queue_request *req)
++{
++	g_slice_free1(sizeof(*req), req);
++}
++
++static void __ofono_dbus_queue_req_complete
++				(struct ofono_dbus_queue_request *req,
++					ofono_dbus_cb_t fn, void *param)
++{
++	DBusMessage *reply = fn ? fn(req->msg, param) : NULL;
++
++	if (!reply)
++		reply = __ofono_error_failed(req->msg);
++
++	__ofono_dbus_pending_reply(&req->msg, reply);
++	__ofono_dbus_queue_req_free(req);
++}
++
++void __ofono_dbus_queue_free(struct ofono_dbus_queue *q)
++{
++	if (q) {
++		while (q->requests) {
++			struct ofono_dbus_queue_request *req = q->requests;
++			DBusMessage *reply = __ofono_error_canceled(req->msg);
++
++			__ofono_dbus_pending_reply(&req->msg, reply);
++			q->requests = req->next;
++			__ofono_dbus_queue_req_free(req);
++		}
++
++		g_free(q);
++	}
++}
++
++ofono_bool_t __ofono_dbus_queue_pending(struct ofono_dbus_queue *q)
++{
++	return q && q->requests;
++}
++
++ofono_bool_t __ofono_dbus_queue_set_pending(struct ofono_dbus_queue *q,
++						DBusMessage *msg)
++{
++	if (!q || q->requests)
++		return FALSE;
++
++	q->requests = __ofono_dbus_queue_req_new(NULL, msg, NULL);
++	return TRUE;
++}
++
++void __ofono_dbus_queue_request(struct ofono_dbus_queue *q,
++			ofono_dbus_cb_t fn, DBusMessage *msg, void *data)
++{
++	struct ofono_dbus_queue_request *req =
++		__ofono_dbus_queue_req_new(fn, msg, data);
++
++	if (q->requests) {
++		struct ofono_dbus_queue_request *prev = q->requests;
++
++		while (prev->next)
++			prev = prev->next;
++
++		prev->next = req;
++	} else {
++		DBusMessage *reply;
++
++		q->requests = req;
++		reply = req->fn(req->msg, req->data);
++		if (reply) {
++			/* The request has completed synchronously */
++			__ofono_dbus_queue_reply_msg(q, reply);
++		}
++	}
++}
++
++static void __ofono_dbus_queue_submit_next(struct ofono_dbus_queue *q)
++{
++	struct ofono_dbus_queue_request *next = q->requests;
++
++	while (next) {
++		struct ofono_dbus_queue_request *done;
++		DBusMessage *reply = next->fn(next->msg, next->data);
++
++		/* The request has been sent, no reply yet */
++		if (!reply)
++			break;
++
++		/* The request has completed synchronously */
++		done = next;
++		next = done->next;
++		q->requests = next;
++		done->next = NULL;
++
++		/* Send the reply */
++		__ofono_dbus_pending_reply(&done->msg, reply);
++		__ofono_dbus_queue_req_free(done);
++	}
++}
++
++/* Consumes one reference to the reply */
++void __ofono_dbus_queue_reply_msg(struct ofono_dbus_queue *q,
++							DBusMessage *reply)
++{
++	struct ofono_dbus_queue_request *done, *next;
++
++	if (!q || !q->requests) {
++		/* This should never happen */
++		if (reply) {
++			dbus_message_unref(reply);
++		}
++		return;
++	}
++
++	/* De-queue one request */
++	done = q->requests;
++	next = done->next;
++	q->requests = next;
++	done->next = NULL;
++
++	/* Interpret NULL reply as a cancel */
++	if (!reply)
++		reply = __ofono_error_canceled(done->msg);
++
++	/* Send the reply */
++	__ofono_dbus_pending_reply(&done->msg, reply);
++	__ofono_dbus_queue_req_free(done);
++
++	/* Submit the next request if there is any */
++	__ofono_dbus_queue_submit_next(q);
++}
++
++void __ofono_dbus_queue_reply_ok(struct ofono_dbus_queue *q)
++{
++	__ofono_dbus_queue_reply_fn(q, dbus_message_new_method_return);
++}
++
++void __ofono_dbus_queue_reply_failed(struct ofono_dbus_queue *q)
++{
++	__ofono_dbus_queue_reply_fn(q, __ofono_error_failed);
++}
++
++void __ofono_dbus_queue_reply_fn(struct ofono_dbus_queue *q,
++						ofono_dbus_reply_cb_t fn)
++{
++	if (q && q->requests)
++		__ofono_dbus_queue_reply_msg(q, fn(q->requests->msg));
++}
++
++void __ofono_dbus_queue_reply_all_ok(struct ofono_dbus_queue *q)
++{
++	__ofono_dbus_queue_reply_all_fn(q, dbus_message_new_method_return);
++}
++
++void __ofono_dbus_queue_reply_all_failed(struct ofono_dbus_queue *q)
++{
++	__ofono_dbus_queue_reply_all_fn(q, __ofono_error_failed);
++}
++
++static DBusMessage * __ofono_dbus_queue_reply_all_error_cb(DBusMessage *msg,
++								void *data)
++{
++	return __ofono_error_from_error((const struct ofono_error *)data, msg);
++}
++
++void __ofono_dbus_queue_reply_all_error(struct ofono_dbus_queue *q,
++					const struct ofono_error *error)
++{
++	if (error) {
++		__ofono_dbus_queue_reply_all_fn_param(q,
++			__ofono_dbus_queue_reply_all_error_cb, (void*) error);
++	} else {
++		__ofono_dbus_queue_reply_all_fn(q, __ofono_error_failed);
++	}
++}
++
++static DBusMessage * __ofono_dbus_queue_reply_all_wrapper(DBusMessage *msg,
++								void *data)
++{
++	 return ((ofono_dbus_reply_cb_t)data)(msg);
++}
++
++void __ofono_dbus_queue_reply_all_fn(struct ofono_dbus_queue *q,
++						ofono_dbus_reply_cb_t fn)
++{
++	__ofono_dbus_queue_reply_all_fn_param(q,
++				__ofono_dbus_queue_reply_all_wrapper,
++				fn ? fn : __ofono_error_failed);
++}
++
++void __ofono_dbus_queue_reply_all_fn_param(struct ofono_dbus_queue *q,
++					ofono_dbus_cb_t fn, void *param)
++{
++	struct ofono_dbus_queue_request *prev, *req;
++	ofono_dbus_cb_t handler;
++	void *data;
++
++	if (!q || !q->requests)
++		return;
++
++	/* Store handler and data so that we can compare against them */
++	req = q->requests;
++	handler = req->fn;
++	data = req->data;
++
++	/* De-queue the first request */
++	q->requests = req->next;
++	req->next = NULL;
++
++	/* Send the reply and free the request */
++	__ofono_dbus_queue_req_complete(req, fn, param);
++
++	/*
++	 * Find all other requests with the same handler and the same data
++	 * and complete those too (except when the handler is NULL)
++	 */
++	if (!handler) {
++		__ofono_dbus_queue_submit_next(q);
++		return;
++	}
++
++	prev = NULL;
++	req = q->requests;
++	while (req) {
++		struct ofono_dbus_queue_request *next = req->next;
++
++		if (req->fn == handler && req->data == data) {
++			/* Found a match */
++			if (prev) {
++				prev->next = next;
++			} else {
++				q->requests = next;
++			}
++
++			__ofono_dbus_queue_req_complete(req, fn, param);
++		} else {
++			/* Keep this one */
++			prev = req;
++		}
++		
++		req = next;
++	}
++	__ofono_dbus_queue_submit_next(q);
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/src/dbus-queue.h b/src/dbus-queue.h
+new file mode 100644
+index 00000000..6e43f3ba
+--- /dev/null
++++ b/src/dbus-queue.h
+@@ -0,0 +1,57 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2017-2019 Jolla Ltd. All rights reserved.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ */
++
++#ifndef OFONO_DBUS_QUEUE_H
++#define OFONO_DBUS_QUEUE_H
++
++#include <ofono/types.h>
++#include <ofono/dbus.h>
++
++struct ofono_dbus_queue;
++
++typedef DBusMessage * (* ofono_dbus_cb_t) (DBusMessage *msg, void *data);
++typedef DBusMessage * (* ofono_dbus_reply_cb_t) (DBusMessage *msg);
++
++struct ofono_dbus_queue *__ofono_dbus_queue_new(void);
++void __ofono_dbus_queue_free(struct ofono_dbus_queue *q);
++void __ofono_dbus_queue_request(struct ofono_dbus_queue *q,
++			ofono_dbus_cb_t fn, DBusMessage *msg, void *data);
++ofono_bool_t __ofono_dbus_queue_pending(struct ofono_dbus_queue *q);
++ofono_bool_t __ofono_dbus_queue_set_pending(struct ofono_dbus_queue *q,
++						DBusMessage *msg);
++void __ofono_dbus_queue_reply_msg(struct ofono_dbus_queue *q,
++						DBusMessage *reply);
++void __ofono_dbus_queue_reply_ok(struct ofono_dbus_queue *q);
++void __ofono_dbus_queue_reply_failed(struct ofono_dbus_queue *q);
++void __ofono_dbus_queue_reply_fn(struct ofono_dbus_queue *q,
++						ofono_dbus_reply_cb_t fn);
++void __ofono_dbus_queue_reply_all_ok(struct ofono_dbus_queue *q);
++void __ofono_dbus_queue_reply_all_failed(struct ofono_dbus_queue *q);
++void __ofono_dbus_queue_reply_all_error(struct ofono_dbus_queue *q,
++					const struct ofono_error *error);
++void __ofono_dbus_queue_reply_all_fn(struct ofono_dbus_queue *q,
++					ofono_dbus_reply_cb_t fn);
++void __ofono_dbus_queue_reply_all_fn_param(struct ofono_dbus_queue *q,
++					ofono_dbus_cb_t fn, void *data);
++
++#endif /* OFONO_DBUS_QUEUE_H */
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/src/dbus.c b/src/dbus.c
+index a1751781..3ff12d5f 100644
+--- a/src/dbus.c
++++ b/src/dbus.c
+@@ -209,8 +209,8 @@ void ofono_dbus_dict_append_dict(DBusMessageIter *dict, const char *key,
+ 	dbus_message_iter_close_container(dict, &entry);
+ }
+ 
+-int ofono_dbus_signal_property_changed(DBusConnection *conn,
+-					const char *path,
++/* Since mer/1.23+git31 */
++DBusMessage *ofono_dbus_signal_new_property_changed(const char *path,
+ 					const char *interface,
+ 					const char *name,
+ 					int type, const void *value)
+@@ -219,11 +219,8 @@ int ofono_dbus_signal_property_changed(DBusConnection *conn,
+ 	DBusMessageIter iter;
+ 
+ 	signal = dbus_message_new_signal(path, interface, "PropertyChanged");
+-	if (signal == NULL) {
+-		ofono_error("Unable to allocate new %s.PropertyChanged signal",
+-				interface);
+-		return -1;
+-	}
++	if (signal == NULL)
++		return NULL;
+ 
+ 	dbus_message_iter_init_append(signal, &iter);
+ 
+@@ -231,6 +228,24 @@ int ofono_dbus_signal_property_changed(DBusConnection *conn,
+ 
+ 	append_variant(&iter, type, value);
+ 
++	return signal;
++}
++
++int ofono_dbus_signal_property_changed(DBusConnection *conn,
++					const char *path,
++					const char *interface,
++					const char *name,
++					int type, const void *value)
++{
++	DBusMessage *signal = ofono_dbus_signal_new_property_changed(path,
++						interface, name, type, value);
++
++	if (signal == NULL) {
++		ofono_error("Unable to allocate new %s.PropertyChanged signal",
++				interface);
++		return -1;
++	}
++
+ 	return g_dbus_send_message(conn, signal);
+ }
+ 
+diff --git a/src/ofono.h b/src/ofono.h
+index 97b69f14..ff7fc11a 100644
+--- a/src/ofono.h
++++ b/src/ofono.h
+@@ -614,6 +614,7 @@ void __ofono_private_network_release(int id);
+ ofono_bool_t __ofono_private_network_request(ofono_private_network_cb_t cb,
+ 						int *id, void *data);
+ 
++#include <ofono/dbus-access.h>
+ #include <ofono/netmon.h>
+ #include <ofono/lte.h>
+ #include <ofono/ims.h>
+diff --git a/src/ofono.h.orig b/src/ofono.h.orig
+new file mode 100644
+index 00000000..97b69f14
+--- /dev/null
++++ b/src/ofono.h.orig
+@@ -0,0 +1,619 @@
++/*
++ *
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2008-2011  Intel Corporation. All rights reserved.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
++ *
++ */
++
++#include <glib.h>
++#include <ell/ell.h>
++
++#define OFONO_API_SUBJECT_TO_CHANGE
++
++#include <ofono/types.h>
++
++void __ofono_exit(void);
++
++int __ofono_handsfree_audio_manager_init(void);
++void __ofono_handsfree_audio_manager_cleanup(void);
++
++void __ofono_modem_shutdown(void);
++
++#include <ofono/log.h>
++
++int __ofono_log_init(const char *program, const char *debug,
++						ofono_bool_t detach);
++void __ofono_log_cleanup(void);
++void __ofono_log_enable(struct ofono_debug_desc *start,
++					struct ofono_debug_desc *stop);
++
++#include <ofono/dbus.h>
++
++int __ofono_dbus_init(DBusConnection *conn);
++void __ofono_dbus_cleanup(void);
++
++DBusMessage *__ofono_error_invalid_args(DBusMessage *msg);
++DBusMessage *__ofono_error_invalid_format(DBusMessage *msg);
++DBusMessage *__ofono_error_not_implemented(DBusMessage *msg);
++DBusMessage *__ofono_error_failed(DBusMessage *msg);
++DBusMessage *__ofono_error_busy(DBusMessage *msg);
++DBusMessage *__ofono_error_not_found(DBusMessage *msg);
++DBusMessage *__ofono_error_not_active(DBusMessage *msg);
++DBusMessage *__ofono_error_not_supported(DBusMessage *msg);
++DBusMessage *__ofono_error_not_available(DBusMessage *msg);
++DBusMessage *__ofono_error_timed_out(DBusMessage *msg);
++DBusMessage *__ofono_error_sim_not_ready(DBusMessage *msg);
++DBusMessage *__ofono_error_in_use(DBusMessage *msg);
++DBusMessage *__ofono_error_not_attached(DBusMessage *msg);
++DBusMessage *__ofono_error_attach_in_progress(DBusMessage *msg);
++DBusMessage *__ofono_error_not_registered(DBusMessage *msg);
++DBusMessage *__ofono_error_canceled(DBusMessage *msg);
++DBusMessage *__ofono_error_access_denied(DBusMessage *msg);
++DBusMessage *__ofono_error_emergency_active(DBusMessage *msg);
++DBusMessage *__ofono_error_incorrect_password(DBusMessage *msg);
++DBusMessage *__ofono_error_not_allowed(DBusMessage *msg);
++DBusMessage *__ofono_error_not_recognized(DBusMessage *msg);
++DBusMessage *__ofono_error_network_terminated(DBusMessage *msg);
++
++DBusMessage *__ofono_error_from_error(const struct ofono_error *error,
++						DBusMessage *msg);
++
++void __ofono_dbus_pending_reply(DBusMessage **msg, DBusMessage *reply);
++
++struct ofono_watchlist_item {
++	unsigned int id;
++	void *notify;
++	void *notify_data;
++	ofono_destroy_func destroy;
++};
++
++struct ofono_watchlist {
++	int next_id;
++	GSList *items;
++	ofono_destroy_func destroy;
++};
++
++struct ofono_watchlist *__ofono_watchlist_new(ofono_destroy_func destroy);
++unsigned int __ofono_watchlist_add_item(struct ofono_watchlist *watchlist,
++					struct ofono_watchlist_item *item);
++gboolean __ofono_watchlist_remove_item(struct ofono_watchlist *watchlist,
++					unsigned int id);
++void __ofono_watchlist_free(struct ofono_watchlist *watchlist);
++
++struct ofono_module_desc {
++	const char *name;
++	int (*init)(void);
++	void (*exit)(void);
++} __attribute__((aligned(8)));
++
++#define OFONO_MODULE(name, init, exit)					\
++	_Pragma("GCC diagnostic push")					\
++	_Pragma("GCC diagnostic ignored \"-Wattributes\"")		\
++	static struct ofono_module_desc __ofono_module_ ## name		\
++		__attribute__((used, retain, section("__ofono_module"),	\
++			       aligned(8))) = {				\
++			#name, init, exit				\
++		};							\
++	_Pragma("GCC diagnostic pop")
++
++int __ofono_modules_init(void);
++void __ofono_modules_cleanup(void);
++
++#include <ofono/plugin.h>
++
++int __ofono_plugin_init(const char *pattern, const char *exclude);
++void __ofono_plugin_cleanup(void);
++
++void __ofono_plugin_foreach(void (*fn) (struct ofono_plugin_desc *desc,
++			int flags, void *user_data), void *user_data);
++
++#define OFONO_PLUGIN_FLAG_BUILTIN (0x01)
++#define OFONO_PLUGIN_FLAG_ACTIVE  (0x02)
++
++#include <ofono/modem.h>
++
++typedef void (*ofono_modem_foreach_func)(struct ofono_modem *modem,
++						void *data);
++void __ofono_modem_foreach(ofono_modem_foreach_func cb, void *userdata);
++
++unsigned int __ofono_modem_callid_next(struct ofono_modem *modem);
++void __ofono_modem_callid_hold(struct ofono_modem *modem, int id);
++void __ofono_modem_callid_release(struct ofono_modem *modem, int id);
++void __ofono_modem_append_properties(struct ofono_modem *modem,
++						DBusMessageIter *dict);
++
++struct ofono_atom;
++
++enum ofono_atom_type {
++	OFONO_ATOM_TYPE_DEVINFO,
++	OFONO_ATOM_TYPE_CALL_BARRING,
++	OFONO_ATOM_TYPE_CALL_FORWARDING,
++	OFONO_ATOM_TYPE_CALL_METER,
++	OFONO_ATOM_TYPE_CALL_SETTINGS,
++	OFONO_ATOM_TYPE_NETREG,
++	OFONO_ATOM_TYPE_PHONEBOOK,
++	OFONO_ATOM_TYPE_SMS,
++	OFONO_ATOM_TYPE_SIM,
++	OFONO_ATOM_TYPE_USSD,
++	OFONO_ATOM_TYPE_VOICECALL,
++	OFONO_ATOM_TYPE_HISTORY,
++	OFONO_ATOM_TYPE_SSN,
++	OFONO_ATOM_TYPE_MESSAGE_WAITING,
++	OFONO_ATOM_TYPE_CBS,
++	OFONO_ATOM_TYPE_CALL_VOLUME,
++	OFONO_ATOM_TYPE_GPRS,
++	OFONO_ATOM_TYPE_GPRS_CONTEXT,
++	OFONO_ATOM_TYPE_RADIO_SETTINGS,
++	OFONO_ATOM_TYPE_AUDIO_SETTINGS,
++	OFONO_ATOM_TYPE_STK,
++	OFONO_ATOM_TYPE_NETTIME,
++	OFONO_ATOM_TYPE_CTM,
++	OFONO_ATOM_TYPE_CDMA_VOICECALL_MANAGER,
++	OFONO_ATOM_TYPE_CDMA_CONNMAN,
++	OFONO_ATOM_TYPE_SIM_AUTH,
++	OFONO_ATOM_TYPE_EMULATOR_DUN,
++	OFONO_ATOM_TYPE_EMULATOR_HFP,
++	OFONO_ATOM_TYPE_LOCATION_REPORTING,
++	OFONO_ATOM_TYPE_GNSS,
++	OFONO_ATOM_TYPE_CDMA_SMS,
++	OFONO_ATOM_TYPE_CDMA_NETREG,
++	OFONO_ATOM_TYPE_HANDSFREE,
++	OFONO_ATOM_TYPE_SIRI,
++	OFONO_ATOM_TYPE_NETMON,
++	OFONO_ATOM_TYPE_LTE,
++	OFONO_ATOM_TYPE_IMS,
++};
++
++enum ofono_atom_watch_condition {
++	OFONO_ATOM_WATCH_CONDITION_REGISTERED,
++	OFONO_ATOM_WATCH_CONDITION_UNREGISTERED
++};
++
++typedef void (*ofono_atom_watch_func)(struct ofono_atom *atom,
++					enum ofono_atom_watch_condition cond,
++					void *data);
++
++typedef void (*ofono_atom_func)(struct ofono_atom *atom, void *data);
++
++struct ofono_atom *__ofono_modem_add_atom(struct ofono_modem *modem,
++					enum ofono_atom_type type,
++					void (*destruct)(struct ofono_atom *),
++					void *data);
++
++struct ofono_atom *__ofono_modem_add_atom_offline(struct ofono_modem *modem,
++					enum ofono_atom_type type,
++					void (*destruct)(struct ofono_atom *),
++					void *data);
++
++struct ofono_atom *__ofono_modem_find_atom(struct ofono_modem *modem,
++						enum ofono_atom_type type);
++
++void __ofono_modem_foreach_atom(struct ofono_modem *modem,
++				enum ofono_atom_type type,
++				ofono_atom_func callback, void *data);
++
++void __ofono_modem_foreach_registered_atom(struct ofono_modem *modem,
++						enum ofono_atom_type type,
++						ofono_atom_func callback,
++						void *data);
++
++void *__ofono_atom_get_data(struct ofono_atom *atom);
++const char *__ofono_atom_get_path(struct ofono_atom *atom);
++struct ofono_modem *__ofono_atom_get_modem(struct ofono_atom *atom);
++
++#define __ofono_atom_find(enum_type, modem)			\
++({								\
++	struct ofono_atom *tmp_atom =				\
++		__ofono_modem_find_atom(modem, enum_type);	\
++								\
++	tmp_atom ? __ofono_atom_get_data(tmp_atom) : NULL;	\
++})
++
++void __ofono_atom_register(struct ofono_atom *atom,
++				void (*unregister)(struct ofono_atom *));
++void __ofono_atom_unregister(struct ofono_atom *atom);
++
++gboolean __ofono_atom_get_registered(struct ofono_atom *atom);
++
++unsigned int __ofono_modem_add_atom_watch(struct ofono_modem *modem,
++					enum ofono_atom_type type,
++					ofono_atom_watch_func notify,
++					void *data,
++					ofono_destroy_func destroy);
++gboolean __ofono_modem_remove_atom_watch(struct ofono_modem *modem,
++						unsigned int id);
++
++void __ofono_atom_free(struct ofono_atom *atom);
++
++const void *__ofono_driver_builtin_find(const char *name,
++				const struct ofono_driver_desc *start,
++				const struct ofono_driver_desc *stop);
++
++#define OFONO_DEFINE_ATOM_CREATE(type, atom_type, ...)			\
++extern struct ofono_driver_desc __start___ ## type[];			\
++extern struct ofono_driver_desc __stop___ ## type[];			\
++									\
++struct ofono_ ## type *ofono_ ## type ##_create(			\
++				struct ofono_modem *modem,		\
++				unsigned int vendor, const char *driver,\
++				void *data)				\
++{									\
++	const struct ofono_ ## type ## _driver *drv =			\
++		__ofono_driver_builtin_find(driver,			\
++				__start___ ## type,			\
++				__stop___ ## type);			\
++	struct ofono_ ## type *atom;					\
++									\
++	if (!drv || !drv->probe)					\
++		return NULL;						\
++									\
++	atom = g_new0(struct ofono_ ##type, 1);				\
++	atom->atom = __ofono_modem_add_atom(modem, atom_type,		\
++				type ##_remove, atom);			\
++	__VA_ARGS__							\
++									\
++	if (drv->probe(atom, vendor, data) < 0)	{			\
++		ofono_ ## type ##_remove(atom);				\
++		return NULL;						\
++	}								\
++									\
++	atom->driver = drv;						\
++	return atom;							\
++}
++
++typedef void (*ofono_modemwatch_cb_t)(struct ofono_modem *modem,
++					gboolean added, void *data);
++void __ofono_modemwatch_init(void);
++void __ofono_modemwatch_cleanup(void);
++unsigned int __ofono_modemwatch_add(ofono_modemwatch_cb_t cb, void *user,
++					ofono_destroy_func destroy);
++gboolean __ofono_modemwatch_remove(unsigned int id);
++
++typedef void (*ofono_modem_online_notify_func)(struct ofono_modem *modem,
++						ofono_bool_t online,
++						void *data);
++unsigned int __ofono_modem_add_online_watch(struct ofono_modem *modem,
++					ofono_modem_online_notify_func notify,
++					void *data, ofono_destroy_func destroy);
++void __ofono_modem_remove_online_watch(struct ofono_modem *modem,
++					unsigned int id);
++
++typedef void (*ofono_modem_powered_notify_func)(struct ofono_modem *modem,
++						ofono_bool_t powered,
++						void *data);
++
++unsigned int __ofono_modem_add_powered_watch(struct ofono_modem *modem,
++					ofono_modem_online_notify_func notify,
++					void *data, ofono_destroy_func destroy);
++void __ofono_modem_remove_powered_watch(struct ofono_modem *modem,
++					unsigned int id);
++
++void __ofono_modem_sim_reset(struct ofono_modem *modem);
++
++void __ofono_modem_inc_emergency_mode(struct ofono_modem *modem);
++void __ofono_modem_dec_emergency_mode(struct ofono_modem *modem);
++
++#include <ofono/call-barring.h>
++
++gboolean __ofono_call_barring_is_busy(struct ofono_call_barring *cb);
++
++#include <ofono/call-forwarding.h>
++
++gboolean __ofono_call_forwarding_is_busy(struct ofono_call_forwarding *cf);
++
++#include <ofono/call-meter.h>
++#include <ofono/call-settings.h>
++
++gboolean __ofono_call_settings_is_busy(struct ofono_call_settings *cs);
++
++#include <ofono/cbs.h>
++#include <ofono/devinfo.h>
++#include <ofono/phonebook.h>
++#include <ofono/gprs.h>
++#include <ofono/gprs-context.h>
++#include <ofono/radio-settings.h>
++#include <ofono/audio-settings.h>
++#include <ofono/ctm.h>
++#include <ofono/location-reporting.h>
++
++#include <ofono/voicecall.h>
++
++enum ofono_voicecall_interaction {
++	OFONO_VOICECALL_INTERACTION_NONE	= 0,
++	OFONO_VOICECALL_INTERACTION_PUT_ON_HOLD	= 1,
++	OFONO_VOICECALL_INTERACTION_DISCONNECT	= 2,
++};
++
++typedef void (*ofono_voicecall_dial_cb_t)(struct ofono_call *call, void *data);
++typedef void (*ofono_voicecall_tone_cb_t)(int error, void *data);
++
++ofono_bool_t __ofono_voicecall_is_busy(struct ofono_voicecall *vc,
++					enum ofono_voicecall_interaction type);
++
++int __ofono_voicecall_dial(struct ofono_voicecall *vc,
++				const char *addr, int addr_type,
++				const char *message, unsigned char icon_id,
++				enum ofono_voicecall_interaction interaction,
++				ofono_voicecall_dial_cb_t cb, void *user_data);
++void __ofono_voicecall_dial_cancel(struct ofono_voicecall *vc);
++
++void __ofono_voicecall_set_alpha_and_icon_id(struct ofono_voicecall *vc,
++						const char *addr, int addr_type,
++						const char *message,
++						unsigned char icon_id);
++void __ofono_voicecall_clear_alpha_and_icon_id(struct ofono_voicecall *vc);
++
++int __ofono_voicecall_tone_send(struct ofono_voicecall *vc,
++				const char *tone_str,
++				ofono_voicecall_tone_cb_t cb, void *user_data);
++void __ofono_voicecall_tone_cancel(struct ofono_voicecall *vc, int id);
++
++struct ofono_call *__ofono_voicecall_find_call_with_status(
++				struct ofono_voicecall *vc, int status);
++
++#include <ofono/sms.h>
++
++struct sms;
++
++enum ofono_sms_submit_flag {
++	OFONO_SMS_SUBMIT_FLAG_REQUEST_SR =	0x1,
++	OFONO_SMS_SUBMIT_FLAG_RECORD_HISTORY =	0x2,
++	OFONO_SMS_SUBMIT_FLAG_RETRY =		0x4,
++	OFONO_SMS_SUBMIT_FLAG_EXPOSE_DBUS =	0x8,
++	OFONO_SMS_SUBMIT_FLAG_REUSE_UUID =	0x10,
++};
++
++typedef void (*ofono_sms_txq_submit_cb_t)(gboolean ok, void *data);
++typedef void (*ofono_sms_txq_queued_cb_t)(struct ofono_sms *sms,
++						const struct ofono_uuid *uuid,
++						void *data);
++typedef void (*ofono_sms_text_notify_cb_t)(const char *from,
++						const struct tm *remote,
++						const struct tm *local,
++						const char *text,
++						void *data);
++typedef void (*ofono_sms_datagram_notify_cb_t)(const char *from,
++						const struct tm *remote,
++						const struct tm *local,
++						int dst, int src,
++						const unsigned char *buffer,
++						unsigned int len,
++						void *data);
++
++int __ofono_sms_txq_submit(struct ofono_sms *sms, GSList *list,
++				unsigned int flags, struct ofono_uuid *uuid,
++				ofono_sms_txq_queued_cb_t, void *data);
++
++int __ofono_sms_txq_set_submit_notify(struct ofono_sms *sms,
++					struct ofono_uuid *uuid,
++					ofono_sms_txq_submit_cb_t cb,
++					void *data,
++					ofono_destroy_func destroy);
++
++int __ofono_sms_txq_cancel(struct ofono_sms *sms,
++				const struct ofono_uuid *uuid);
++
++const char *__ofono_sms_message_path_from_uuid(struct ofono_sms *sms,
++						const struct ofono_uuid *uuid);
++
++unsigned int __ofono_sms_text_watch_add(struct ofono_sms *sms,
++					ofono_sms_text_notify_cb_t cb,
++					void *data, ofono_destroy_func destroy);
++gboolean __ofono_sms_text_watch_remove(struct ofono_sms *sms,
++					unsigned int id);
++
++unsigned int __ofono_sms_datagram_watch_add(struct ofono_sms *sms,
++					ofono_sms_datagram_notify_cb_t cb,
++					int dst, int src, void *data,
++					ofono_destroy_func destroy);
++gboolean __ofono_sms_datagram_watch_remove(struct ofono_sms *sms,
++					unsigned int id);
++
++unsigned short __ofono_sms_get_next_ref(struct ofono_sms *sms);
++
++#include <ofono/sim.h>
++
++struct ofono_sim_aid_session;
++enum sim_app_type;
++
++typedef void (*ofono_sim_session_event_cb_t)(ofono_bool_t active,
++		int session_id, void *data);
++
++ofono_bool_t __ofono_sim_ust_service_available(struct ofono_sim *sim,
++						int ust_service);
++ofono_bool_t __ofono_sim_service_available(struct ofono_sim *sim,
++						int ust_service,
++						int sst_service);
++ofono_bool_t __ofono_sim_cphs_service_available(struct ofono_sim *sim,
++						int cphs_service);
++
++ofono_bool_t __ofono_is_valid_sim_pin(const char *pin,
++					enum ofono_sim_password_type type);
++
++ofono_bool_t __ofono_is_valid_net_pin(const char *pin);
++
++void __ofono_sim_refresh(struct ofono_sim *sim, struct l_queue *file_list,
++				bool full_file_change, bool naa_init);
++
++void __ofono_sim_recheck_pin(struct ofono_sim *sim);
++
++GSList *__ofono_sim_get_aid_list(struct ofono_sim *sim);
++
++unsigned int __ofono_sim_add_session_watch(
++		struct ofono_sim_aid_session *session,
++		ofono_sim_session_event_cb_t notify, void *data,
++		ofono_destroy_func destroy);
++
++void __ofono_sim_remove_session_watch(struct ofono_sim_aid_session *session,
++		unsigned int id);
++
++struct ofono_sim_aid_session *__ofono_sim_get_session_by_aid(
++		struct ofono_sim *sim, unsigned char *aid);
++
++struct ofono_sim_aid_session *__ofono_sim_get_session_by_type(
++		struct ofono_sim *sim, enum sim_app_type type);
++
++int __ofono_sim_session_get_id(struct ofono_sim_aid_session *session);
++
++enum sim_app_type __ofono_sim_session_get_type(
++		struct ofono_sim_aid_session *session);
++
++unsigned char *__ofono_sim_session_get_aid(
++		struct ofono_sim_aid_session *session);
++
++const char *__ofono_sim_get_impi(struct ofono_sim *sim);
++void __ofono_sim_clear_cached_pins(struct ofono_sim *sim);
++
++#include <ofono/stk.h>
++
++typedef void (*__ofono_sms_sim_download_cb_t)(ofono_bool_t ok,
++						const unsigned char *tp_ud,
++						int len, void *data);
++
++struct cbs;
++void __ofono_cbs_sim_download(struct ofono_stk *stk, const struct cbs *msg);
++
++struct sms;
++int __ofono_sms_sim_download(struct ofono_stk *stk, const struct sms *msg,
++				__ofono_sms_sim_download_cb_t cb, void *data);
++
++#include <ofono/ussd.h>
++
++typedef gboolean (*ofono_ussd_ssc_cb_t)(int type,
++					const char *sc,
++					const char *sia, const char *sib,
++					const char *sic, const char *dn,
++					DBusMessage *msg, void *data);
++
++typedef gboolean (*ofono_ussd_passwd_cb_t)(const char *sc,
++					const char *old, const char *new,
++					DBusMessage *msg, void *data);
++
++typedef void (*ofono_ussd_request_cb_t)(int error, int dcs,
++					const unsigned char *pdu, int len,
++					void *data);
++
++gboolean __ofono_ussd_ssc_register(struct ofono_ussd *ussd, const char *sc,
++					ofono_ussd_ssc_cb_t cb, void *data,
++					ofono_destroy_func destroy);
++void __ofono_ussd_ssc_unregister(struct ofono_ussd *ussd, const char *sc);
++
++gboolean __ofono_ussd_passwd_register(struct ofono_ussd *ussd, const char *sc,
++					ofono_ussd_passwd_cb_t cb, void *data,
++					ofono_destroy_func destroy);
++void __ofono_ussd_passwd_unregister(struct ofono_ussd *ussd, const char *sc);
++gboolean __ofono_ussd_is_busy(struct ofono_ussd *ussd);
++
++int __ofono_ussd_initiate(struct ofono_ussd *ussd, int dcs,
++			const unsigned char *pdu, int len,
++			ofono_ussd_request_cb_t cb, void *user_data);
++void __ofono_ussd_initiate_cancel(struct ofono_ussd *ussd);
++
++#include <ofono/netreg.h>
++
++typedef void (*ofono_netreg_status_notify_cb_t)(int status, int lac, int ci,
++			int tech, const char *mcc, const char *mnc,
++			void *data);
++
++unsigned int __ofono_netreg_add_status_watch(struct ofono_netreg *netreg,
++				ofono_netreg_status_notify_cb_t cb,
++				void *data, ofono_destroy_func destroy);
++
++gboolean __ofono_netreg_remove_status_watch(struct ofono_netreg *netreg,
++						unsigned int id);
++
++void __ofono_netreg_set_base_station_name(struct ofono_netreg *netreg,
++						const char *name);
++
++#include <ofono/history.h>
++
++void __ofono_history_probe_drivers(struct ofono_modem *modem);
++
++void __ofono_history_call_ended(struct ofono_modem *modem,
++				const struct ofono_call *call,
++				time_t start, time_t end);
++
++void __ofono_history_call_missed(struct ofono_modem *modem,
++				const struct ofono_call *call, time_t when);
++
++void __ofono_history_sms_received(struct ofono_modem *modem,
++					const struct ofono_uuid *uuid,
++					const char *from,
++					const struct tm *remote,
++					const struct tm *local,
++					const char *text);
++
++void __ofono_history_sms_send_pending(struct ofono_modem *modem,
++					const struct ofono_uuid *uuid,
++					const char *to,
++					time_t when, const char *text);
++
++void __ofono_history_sms_send_status(struct ofono_modem *modem,
++					const struct ofono_uuid *uuid,
++					time_t when,
++					enum ofono_history_sms_status status);
++
++#include <ofono/message-waiting.h>
++
++struct sms;
++
++void __ofono_message_waiting_mwi(struct ofono_message_waiting *mw,
++				struct sms *sms, gboolean *out_discard);
++
++const struct ofono_phone_number *__ofono_message_waiting_get_mbdn(
++					struct ofono_message_waiting *mw,
++					unsigned int index);
++
++#include <ofono/nettime.h>
++
++void __ofono_nettime_probe_drivers(struct ofono_modem *modem);
++
++void __ofono_nettime_info_received(struct ofono_modem *modem,
++					struct ofono_network_time *info);
++
++#include <ofono/sim-auth.h>
++
++struct provision_db_entry;
++bool __ofono_provision_get_settings(const char *mcc,
++				const char *mnc, const char *spn,
++				struct provision_db_entry **settings,
++				size_t *count);
++
++#include <ofono/emulator.h>
++
++enum ofono_emulator_slc_condition {
++	OFONO_EMULATOR_SLC_CONDITION_CMER,
++	OFONO_EMULATOR_SLC_CONDITION_CHLD,
++	OFONO_EMULATOR_SLC_CONDITION_BIND,
++};
++
++void __ofono_emulator_set_indicator_forced(struct ofono_emulator *em,
++						const char *name, int value);
++void __ofono_emulator_slc_condition(struct ofono_emulator *em,
++					enum ofono_emulator_slc_condition cond);
++
++#include <ofono/gnss.h>
++
++#include <ofono/private-network.h>
++
++void __ofono_private_network_release(int id);
++ofono_bool_t __ofono_private_network_request(ofono_private_network_cb_t cb,
++						int *id, void *data);
++
++#include <ofono/netmon.h>
++#include <ofono/lte.h>
++#include <ofono/ims.h>
+diff --git a/unit/test-dbus-access.c b/unit/test-dbus-access.c
+new file mode 100644
+index 00000000..485dbba4
+--- /dev/null
++++ b/unit/test-dbus-access.c
+@@ -0,0 +1,220 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2019-2022 Jolla Ltd.
++ *  Copyright (C) 2020 Open Mobile Platform LLC.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ *  GNU General Public License for more details.
++ */
++
++#include "ofono.h"
++
++#include <errno.h>
++
++static enum ofono_dbus_access dontcare_method_access(const char *sender,
++	enum ofono_dbus_access_intf intf, int method, const char *arg)
++{
++	return OFONO_DBUS_ACCESS_DONT_CARE;
++}
++static enum ofono_dbus_access allow_method_access(const char *sender,
++	enum ofono_dbus_access_intf intf, int method, const char *arg)
++{
++	return OFONO_DBUS_ACCESS_ALLOW;
++}
++static enum ofono_dbus_access deny_method_access(const char *sender,
++	enum ofono_dbus_access_intf intf, int method, const char *arg)
++{
++	return OFONO_DBUS_ACCESS_DENY;
++}
++
++static enum ofono_dbus_access broken_method_access(const char *sender,
++	enum ofono_dbus_access_intf intf, int method, const char *arg)
++{
++	return (enum ofono_dbus_access)(-1);
++}
++
++struct ofono_dbus_access_plugin access_inval;
++struct ofono_dbus_access_plugin access_dontcare = {
++	.name = "DontCare",
++	.priority = OFONO_DBUS_ACCESS_PRIORITY_LOW,
++	.method_access = dontcare_method_access
++};
++struct ofono_dbus_access_plugin access_allow = {
++	.name = "Allow",
++	.priority = OFONO_DBUS_ACCESS_PRIORITY_DEFAULT,
++	.method_access = allow_method_access
++};
++struct ofono_dbus_access_plugin access_deny = {
++	.name = "Deny",
++	.priority = OFONO_DBUS_ACCESS_PRIORITY_LOW,
++	.method_access = deny_method_access
++};
++
++struct ofono_dbus_access_plugin access_broken = {
++	.name = "Broken",
++	.priority = OFONO_DBUS_ACCESS_PRIORITY_LOW,
++	.method_access = broken_method_access
++};
++
++/*==========================================================================*
++ * Tests
++ *==========================================================================*/
++
++static void test_intf_name()
++{
++	int i;
++
++	/* Valid interface ids must have names */
++	for (i = 0; i < OFONO_DBUS_ACCESS_INTF_COUNT; i++) {
++		g_assert(ofono_dbus_access_intf_name(i));
++	}
++	/* And the invalid ones must have no names */
++	g_assert(!ofono_dbus_access_intf_name(-1));
++	g_assert(!ofono_dbus_access_intf_name(i));
++	/* An no method names too */
++	g_assert(!ofono_dbus_access_method_name(-1, 0));
++	g_assert(!ofono_dbus_access_method_name(i, 0));
++}
++
++struct test_method_name_data {
++	enum ofono_dbus_access_intf intf;
++	int n_methods;
++};
++
++static const struct test_method_name_data method_name_tests[] = {
++	{
++		OFONO_DBUS_ACCESS_INTF_MESSAGE,
++		OFONO_DBUS_ACCESS_MESSAGE_METHOD_COUNT
++	},{
++		OFONO_DBUS_ACCESS_INTF_MESSAGEMGR,
++		OFONO_DBUS_ACCESS_MESSAGEMGR_METHOD_COUNT
++	},{
++		OFONO_DBUS_ACCESS_INTF_VOICECALL,
++		OFONO_DBUS_ACCESS_VOICECALL_METHOD_COUNT
++	},{
++		OFONO_DBUS_ACCESS_INTF_VOICECALLMGR,
++		OFONO_DBUS_ACCESS_VOICECALLMGR_METHOD_COUNT
++	},{
++		OFONO_DBUS_ACCESS_INTF_CONNCTX,
++		OFONO_DBUS_ACCESS_CONNCTX_METHOD_COUNT
++	},{
++		OFONO_DBUS_ACCESS_INTF_CONNMGR,
++		OFONO_DBUS_ACCESS_CONNMGR_METHOD_COUNT
++	},{
++		OFONO_DBUS_ACCESS_INTF_SIMMGR,
++		OFONO_DBUS_ACCESS_SIMMGR_METHOD_COUNT
++	},{
++		OFONO_DBUS_ACCESS_INTF_MODEM,
++		OFONO_DBUS_ACCESS_MODEM_METHOD_COUNT
++	},{
++		OFONO_DBUS_ACCESS_INTF_RADIOSETTINGS,
++		OFONO_DBUS_ACCESS_RADIOSETTINGS_METHOD_COUNT
++	},{
++		OFONO_DBUS_ACCESS_INTF_STK,
++		OFONO_DBUS_ACCESS_STK_METHOD_COUNT
++	},{
++		OFONO_DBUS_ACCESS_INTF_OEMRAW,
++		OFONO_DBUS_ACCESS_OEMRAW_METHOD_COUNT
++	},{
++		OFONO_DBUS_ACCESS_INTF_IMS,
++		OFONO_DBUS_ACCESS_IMS_METHOD_COUNT
++	}
++};
++
++static void test_method_name(gconstpointer test_data)
++{
++	const struct test_method_name_data *test = test_data;
++	int i;
++
++	/* Valid method ids must have names */
++	for (i = 0; i < test->n_methods; i++) {
++		g_assert(ofono_dbus_access_method_name(test->intf, i));
++	}
++	/* And the invalid ones must have no names */
++	g_assert(!ofono_dbus_access_method_name(test->intf, -1));
++	g_assert(!ofono_dbus_access_method_name(test->intf, i));
++}
++
++G_STATIC_ASSERT(G_N_ELEMENTS(method_name_tests)==OFONO_DBUS_ACCESS_INTF_COUNT);
++
++static void test_register()
++{
++	g_assert(ofono_dbus_access_plugin_register(NULL) == -EINVAL);
++	g_assert(ofono_dbus_access_plugin_register(&access_inval) == -EINVAL);
++	ofono_dbus_access_plugin_unregister(NULL);
++
++	/* Plugin won't be registered more than once */
++	g_assert(!ofono_dbus_access_plugin_register(&access_deny));
++	g_assert(ofono_dbus_access_plugin_register(&access_deny) == -EALREADY);
++
++	/* Allow has higher priority */
++	g_assert(!ofono_dbus_access_plugin_register(&access_allow));
++	g_assert(ofono_dbus_access_method_allowed(":1.0", 0, 1, NULL));
++	ofono_dbus_access_plugin_unregister(&access_deny);
++	ofono_dbus_access_plugin_unregister(&access_allow);
++
++	/* Allow has higher priority */
++	g_assert(!ofono_dbus_access_plugin_register(&access_allow));
++	g_assert(!ofono_dbus_access_plugin_register(&access_deny));
++	g_assert(ofono_dbus_access_method_allowed(":1.0", 0, 1, NULL));
++	ofono_dbus_access_plugin_unregister(&access_deny);
++	ofono_dbus_access_plugin_unregister(&access_allow);
++
++	/* Deny wins here */
++	g_assert(!ofono_dbus_access_plugin_register(&access_dontcare));
++	g_assert(!ofono_dbus_access_plugin_register(&access_deny));
++	g_assert(!ofono_dbus_access_method_allowed(":1.0", 0, 1, NULL));
++	ofono_dbus_access_plugin_unregister(&access_deny);
++	ofono_dbus_access_plugin_unregister(&access_dontcare);
++
++	/* And here too */
++	g_assert(!ofono_dbus_access_plugin_register(&access_broken));
++	g_assert(!ofono_dbus_access_plugin_register(&access_deny));
++	g_assert(!ofono_dbus_access_method_allowed(":1.0", 0, 1, NULL));
++	ofono_dbus_access_plugin_unregister(&access_deny);
++	ofono_dbus_access_plugin_unregister(&access_dontcare);
++
++	/* DontCare will allow everything */
++	g_assert(!ofono_dbus_access_plugin_register(&access_dontcare));
++	g_assert(ofono_dbus_access_method_allowed(":1.0", 0, 1, NULL));
++	ofono_dbus_access_plugin_unregister(&access_dontcare);
++}
++
++#define TEST_(test) "/dbus-access/" test
++
++int main(int argc, char *argv[])
++{
++	int i;
++
++	g_test_init(&argc, &argv, NULL);
++
++	__ofono_log_init("test-dbus-access", g_test_verbose() ? "*" : NULL,
++		FALSE);
++
++	g_test_add_func(TEST_("intf_name"), test_intf_name);
++	for (i = 0; i < G_N_ELEMENTS(method_name_tests); i++) {
++		char *name = g_strdup_printf(TEST_("method_name/%d"), i + 1);
++		const struct test_method_name_data *test =
++			method_name_tests + i;
++
++		g_test_add_data_func(name, test, test_method_name);
++		g_free(name);
++	}
++	g_test_add_func(TEST_("register"), test_register);
++	return g_test_run();
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/unit/test-dbus-clients.c b/unit/test-dbus-clients.c
+new file mode 100644
+index 00000000..b3dbefe5
+--- /dev/null
++++ b/unit/test-dbus-clients.c
+@@ -0,0 +1,280 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2021 Jolla Ltd. All rights reserved.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ */
++
++#include "test-dbus.h"
++
++#include <ofono/dbus-clients.h>
++#include <ofono/dbus.h>
++#include <ofono/log.h>
++#include "ofono.h"
++
++#include <gutil_log.h>
++#include <gutil_macros.h>
++
++#include <errno.h>
++
++#define TEST_TIMEOUT                    (10)   /* seconds */
++#define TEST_SENDER                     ":1.0"
++#define TEST_SENDER_1                   ":1.1"
++
++#define TEST_DBUS_PATH                  "/test"
++#define TEST_DBUS_INTERFACE             "test.interface"
++#define TEST_PROPERTY_CHANGED_SIGNAL    "PropertyChanged"
++#define TEST_PROPERTY_NAME              "Test"
++#define TEST_PROPERTY_VALUE             "test"
++
++struct test_data {
++	struct test_dbus_context dbus;
++	struct ofono_dbus_clients *clients;
++	int count;
++};
++
++static gboolean test_debug;
++
++/* ==== dummy interface ==== */
++
++#define test_register_interface(methods,signals,data) \
++	g_assert(g_dbus_register_interface(ofono_dbus_get_connection(), \
++				TEST_DBUS_PATH, TEST_DBUS_INTERFACE, \
++				methods, signals, NULL, data, NULL))
++
++#define test_register_dummy_interface() \
++	test_register_interface(test_dummy_methods, \
++				test_property_change_signal, NULL)
++
++static DBusMessage *test_dummy_handler(DBusConnection *conn,
++					DBusMessage *msg, void *data)
++{
++	g_assert_not_reached();
++	return NULL;
++}
++
++static const GDBusMethodTable test_dummy_methods[] = {
++	{ GDBUS_ASYNC_METHOD("Dummy", NULL, NULL, test_dummy_handler) },
++	{ }
++};
++
++static const GDBusSignalTable test_property_change_signal[] = {
++	{ GDBUS_SIGNAL("PropertyChanged",
++			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
++	{ }
++};
++
++/* ==== common ==== */
++
++static gboolean test_timeout(gpointer param)
++{
++	g_assert(!"TIMEOUT");
++	return G_SOURCE_REMOVE;
++}
++
++static guint test_setup_timeout(void)
++{
++	if (test_debug) {
++		return 0;
++	} else {
++		return g_timeout_add_seconds(TEST_TIMEOUT, test_timeout, NULL);
++	}
++}
++
++static gboolean test_loop_quit(gpointer data)
++{
++	g_main_loop_quit(data);
++	return G_SOURCE_REMOVE;
++}
++
++static void test_loop_quit_later(GMainLoop *loop)
++{
++	g_idle_add(test_loop_quit, loop);
++}
++
++/* ==== null ==== */
++
++static void test_null(void)
++{
++	/* We are NULL tolerant: */
++	ofono_dbus_clients_free(NULL);
++	ofono_dbus_clients_signal(NULL, NULL);
++	ofono_dbus_clients_signal_property_changed(NULL,NULL,NULL,NULL,0,NULL);
++	g_assert(!ofono_dbus_clients_new(NULL, NULL, NULL));
++	g_assert(!ofono_dbus_clients_count(NULL));
++	g_assert(!ofono_dbus_clients_add(NULL, NULL));
++	g_assert(!ofono_dbus_clients_remove(NULL, NULL));
++}
++
++/* ==== basic ==== */
++
++static void test_basic_notify_func(const char *name, void *loop)
++{
++	g_assert_cmpstr(name, == ,TEST_SENDER);
++	g_main_loop_quit(loop);
++}
++
++static void test_basic_start(struct test_dbus_context *dbus)
++{
++	struct test_data *test = G_CAST(dbus, struct test_data, dbus);
++	const char *value = TEST_PROPERTY_VALUE;
++	DBusMessage *signal =
++		ofono_dbus_signal_new_property_changed(TEST_DBUS_PATH,
++			TEST_DBUS_INTERFACE, TEST_PROPERTY_NAME,
++			DBUS_TYPE_STRING, &value);
++
++	test->clients = ofono_dbus_clients_new(ofono_dbus_get_connection(),
++				test_basic_notify_func, test->dbus.loop);
++
++	g_assert(!ofono_dbus_clients_add(test->clients, NULL));
++	g_assert(ofono_dbus_clients_add(test->clients, TEST_SENDER));
++	g_assert(ofono_dbus_clients_remove(test->clients, TEST_SENDER));
++	g_assert(!ofono_dbus_clients_remove(test->clients, TEST_SENDER));
++
++	/* OK to add the same thing twice */
++	g_assert(ofono_dbus_clients_add(test->clients, TEST_SENDER));
++	g_assert(ofono_dbus_clients_add(test->clients, TEST_SENDER));
++	g_assert_cmpuint(ofono_dbus_clients_count(test->clients), == ,1);
++	test_dbus_watch_disconnect_all();
++	g_assert_cmpuint(ofono_dbus_clients_count(test->clients), == ,0);
++
++	/* There's nothing to remove */
++	g_assert(!ofono_dbus_clients_remove(test->clients, TEST_SENDER));
++	g_assert(!ofono_dbus_clients_remove(test->clients, NULL));
++
++	/* These have no effect because client list is empty: */
++	ofono_dbus_clients_signal(test->clients, NULL);
++	ofono_dbus_clients_signal(test->clients, signal);
++	ofono_dbus_clients_signal_property_changed(test->clients, NULL, NULL,
++							NULL, 0, NULL);
++	ofono_dbus_clients_signal_property_changed(test->clients,
++				TEST_DBUS_PATH, TEST_DBUS_INTERFACE,
++				TEST_PROPERTY_NAME, DBUS_TYPE_STRING, &value);
++
++	/* test_basic_notify_func() has called test_loop_quit_later() */
++	dbus_message_unref(signal);
++}
++
++static void test_basic(void)
++{
++	struct test_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test_dbus_setup(&test.dbus);
++	test.dbus.start = test_basic_start;
++
++	g_main_loop_run(test.dbus.loop);
++
++	g_assert(test.clients);
++	ofono_dbus_clients_free(test.clients);
++	test_dbus_shutdown(&test.dbus);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++/* ==== signal ==== */
++
++static void test_signal_handle(struct test_dbus_context *dbus, DBusMessage *msg)
++{
++	struct test_data *test = G_CAST(dbus, struct test_data, dbus);
++
++	g_assert_cmpstr(dbus_message_get_path(msg), == ,TEST_DBUS_PATH);
++	g_assert_cmpstr(dbus_message_get_interface(msg), == ,
++						TEST_DBUS_INTERFACE);
++	g_assert_cmpstr(dbus_message_get_member(msg), == ,
++						TEST_PROPERTY_CHANGED_SIGNAL);
++	test->count++;
++	if (test->count == 2) {
++		test_loop_quit_later(dbus->loop);
++	}
++}
++
++static void test_signal_start(struct test_dbus_context *dbus)
++{
++	struct test_data *test = G_CAST(dbus, struct test_data, dbus);
++	const char *value = TEST_PROPERTY_VALUE;
++
++	test_register_dummy_interface();
++	test->clients = ofono_dbus_clients_new(ofono_dbus_get_connection(),
++								NULL, NULL);
++
++	g_assert(ofono_dbus_clients_add(test->clients, TEST_SENDER));
++	g_assert(ofono_dbus_clients_add(test->clients, TEST_SENDER_1));
++	g_assert_cmpuint(ofono_dbus_clients_count(test->clients), == ,2);
++
++	ofono_dbus_clients_signal_property_changed(test->clients,
++				TEST_DBUS_PATH, TEST_DBUS_INTERFACE,
++				TEST_PROPERTY_NAME, DBUS_TYPE_STRING, &value);
++	/* And wait for 2 signals to arrive */
++}
++
++static void test_signal(void)
++{
++	struct test_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test_dbus_setup(&test.dbus);
++	test.dbus.start = test_signal_start;
++	test.dbus.handle_signal = test_signal_handle;
++
++	g_main_loop_run(test.dbus.loop);
++
++	g_assert_cmpuint(ofono_dbus_clients_count(test.clients), == ,2);
++	test_dbus_watch_disconnect_all();
++	g_assert_cmpuint(ofono_dbus_clients_count(test.clients), == ,0);
++	ofono_dbus_clients_free(test.clients);
++
++	test_dbus_shutdown(&test.dbus);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++#define TEST_(name) "/dbus-clients/" name
++
++int main(int argc, char *argv[])
++{
++	int i;
++
++	g_test_init(&argc, &argv, NULL);
++	for (i = 1; i < argc; i++) {
++		const char *arg = argv[i];
++		if (!strcmp(arg, "-d") || !strcmp(arg, "--debug")) {
++			test_debug = TRUE;
++		} else {
++			GWARN("Unsupported command line option %s", arg);
++		}
++	}
++
++	gutil_log_timestamp = FALSE;
++	gutil_log_default.level = g_test_verbose() ?
++		GLOG_LEVEL_VERBOSE : GLOG_LEVEL_NONE;
++	__ofono_log_init("test-dbus-clients",
++				g_test_verbose() ? "*" : NULL,
++				FALSE);
++
++	g_test_add_func(TEST_("null"), test_null);
++	g_test_add_func(TEST_("basic"), test_basic);
++	g_test_add_func(TEST_("signal"), test_signal);
++
++	return g_test_run();
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/unit/test-dbus-queue.c b/unit/test-dbus-queue.c
+new file mode 100644
+index 00000000..16339740
+--- /dev/null
++++ b/unit/test-dbus-queue.c
+@@ -0,0 +1,716 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2018-2019 Jolla Ltd. All rights reserved.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ */
++
++#include "test-dbus.h"
++
++#include <ofono/dbus.h>
++
++#include "ofono.h"
++#include "dbus-queue.h"
++
++#include <gutil_log.h>
++#include <gutil_macros.h>
++
++#include <errno.h>
++
++#define TEST_TIMEOUT                    (10)   /* seconds */
++#define TEST_DBUS_INTERFACE            "test.interface"
++#define TEST_DBUS_METHOD               "Test"
++#define TEST_DBUS_PATH                 "/"
++
++#define TEST_ERROR_CANCELED            "org.ofono.Error.Canceled"
++#define TEST_ERROR_FAILED              "org.ofono.Error.Failed"
++#define TEST_ERROR_NOT_SUPPORTED       "org.ofono.Error.NotSupported"
++
++#define GDBUS_TEST_METHOD(fn) GDBUS_ASYNC_METHOD(TEST_DBUS_METHOD, \
++				GDBUS_ARGS( { "arg", "i" }), NULL, fn)
++
++static gboolean test_debug;
++
++/* ==== common ==== */
++
++static gboolean test_timeout(gpointer param)
++{
++	g_assert(!"TIMEOUT");
++	return G_SOURCE_REMOVE;
++}
++
++static guint test_setup_timeout(void)
++{
++	if (test_debug) {
++		return 0;
++	} else {
++		return g_timeout_add_seconds(TEST_TIMEOUT, test_timeout, NULL);
++	}
++}
++
++#define test_register_interface(methods,data) \
++	g_assert(g_dbus_register_interface(ofono_dbus_get_connection(), \
++				TEST_DBUS_PATH, TEST_DBUS_INTERFACE, \
++				methods, NULL, NULL, data, NULL))
++
++static void test_client_call(struct test_dbus_context* dbus, dbus_int32_t arg,
++					DBusPendingCallNotifyFunction fn)
++{
++	DBusPendingCall *call;
++	DBusConnection* conn = dbus->client_connection;
++	DBusMessage *msg = dbus_message_new_method_call(NULL, TEST_DBUS_PATH,
++					TEST_DBUS_INTERFACE, TEST_DBUS_METHOD);
++
++	dbus_message_append_args(msg, DBUS_TYPE_INT32, &arg, DBUS_TYPE_INVALID);
++	g_assert(dbus_connection_send_with_reply(conn, msg, &call,
++						DBUS_TIMEOUT_INFINITE));
++	dbus_pending_call_set_notify(call, fn, dbus, NULL);
++	dbus_message_unref(msg);
++}
++
++static void test_expect_canceled(DBusPendingCall *call, void *unused)
++{
++	DBG("");
++	test_dbus_check_error_reply(call, TEST_ERROR_CANCELED);
++}
++
++static void test_expect_failed(DBusPendingCall *call, void *unused)
++{
++	DBG("");
++	test_dbus_check_error_reply(call, TEST_ERROR_FAILED);
++}
++
++static void test_expect_not_supported(DBusPendingCall *call, void *unused)
++{
++	DBG("");
++	test_dbus_check_error_reply(call, TEST_ERROR_NOT_SUPPORTED);
++}
++
++/* ==== basic ==== */
++
++static void test_basic(void)
++{
++	__ofono_dbus_queue_free(__ofono_dbus_queue_new());
++
++	/* These are NULL tolerant: */
++	__ofono_dbus_queue_free(NULL);
++	__ofono_dbus_queue_reply_ok(NULL);
++	__ofono_dbus_queue_reply_failed(NULL);
++	__ofono_dbus_queue_reply_all_ok(NULL);
++	__ofono_dbus_queue_reply_all_failed(NULL);
++	__ofono_dbus_queue_reply_all_error(NULL, NULL);
++	__ofono_dbus_queue_reply_msg(NULL, NULL);
++	g_assert(!__ofono_dbus_queue_pending(NULL));
++	g_assert(!__ofono_dbus_queue_set_pending(NULL, NULL));
++}
++
++/* ==== free ==== */
++
++struct test_free_data {
++	struct test_dbus_context dbus;
++	struct ofono_dbus_queue *queue;
++};
++
++static DBusMessage *test_free_cb(DBusMessage *msg, void *data)
++{
++	DBG("");
++	return NULL;
++}
++
++static void test_free_reply(DBusPendingCall *call, void *dbus)
++{
++	struct test_free_data *test = G_CAST(dbus, struct test_free_data, dbus);
++
++	DBG("");
++	test_dbus_check_error_reply(call, TEST_ERROR_CANCELED);
++	g_main_loop_quit(test->dbus.loop);
++}
++
++static DBusMessage *test_free_handler(DBusConnection *conn,
++						DBusMessage *msg, void *data)
++{
++	struct test_free_data *test = data;
++
++	DBG("");
++
++	/* test_free_cb queues the message */
++	__ofono_dbus_queue_request(test->queue, test_free_cb, msg, test);
++
++	/* And this cancels it: */
++	__ofono_dbus_queue_free(test->queue);
++	test->queue = NULL;
++	return NULL;
++}
++
++static const GDBusMethodTable test_free_methods[] = {
++	{ GDBUS_TEST_METHOD(test_free_handler) },
++	{ }
++};
++
++static void test_free_start(struct test_dbus_context *dbus)
++{
++	struct test_free_data *test = G_CAST(dbus, struct test_free_data, dbus);
++
++	test_register_interface(test_free_methods, test);
++	test_client_call(dbus, 0, test_free_reply);
++}
++
++static void test_free(void)
++{
++	struct test_free_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test_dbus_setup(&test.dbus);
++	test.dbus.start = test_free_start;
++	test.queue = __ofono_dbus_queue_new();
++
++	g_main_loop_run(test.dbus.loop);
++
++	g_assert(!test.queue); /* Freed by test_free_handler */
++	test_dbus_shutdown(&test.dbus);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++/* ==== cancel ==== */
++
++struct test_cancel_data {
++	struct test_dbus_context dbus;
++	struct ofono_dbus_queue *queue;
++};
++
++static gboolean test_cancel_msg(void *data)
++{
++	struct test_cancel_data *test = data;
++
++	/* This is will cancel the message: */
++	__ofono_dbus_queue_reply_msg(test->queue, NULL);
++	return G_SOURCE_REMOVE;
++}
++
++static DBusMessage *test_cancel_cb(DBusMessage *msg, void *data)
++{
++	DBG("");
++	g_idle_add(test_cancel_msg, data);
++	return NULL;
++}
++
++static void test_cancel_reply(DBusPendingCall *call, void *dbus)
++{
++	struct test_cancel_data *test =
++		G_CAST(dbus, struct test_cancel_data, dbus);
++
++	DBG("");
++	test_dbus_check_error_reply(call, TEST_ERROR_CANCELED);
++	g_main_loop_quit(test->dbus.loop);
++}
++
++static DBusMessage *test_cancel_handler(DBusConnection *conn,
++						DBusMessage *msg, void *data)
++{
++	struct test_cancel_data *test = data;
++
++	DBG("");
++
++	__ofono_dbus_queue_request(test->queue, test_cancel_cb, msg, test);
++	return NULL;
++}
++
++static const GDBusMethodTable test_cancel_methods[] = {
++	{ GDBUS_TEST_METHOD(test_cancel_handler) },
++	{ }
++};
++
++static void test_cancel_start(struct test_dbus_context *dbus)
++{
++	struct test_cancel_data *test =
++		G_CAST(dbus, struct test_cancel_data, dbus);
++
++	test_register_interface(test_cancel_methods, test);
++	test_client_call(dbus, 0, test_cancel_reply);
++}
++
++static void test_cancel(void)
++{
++	struct test_cancel_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test_dbus_setup(&test.dbus);
++	test.dbus.start = test_cancel_start;
++	test.queue = __ofono_dbus_queue_new();
++
++	g_main_loop_run(test.dbus.loop);
++
++	__ofono_dbus_queue_free(test.queue);
++	test_dbus_shutdown(&test.dbus);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++/* ==== async ==== */
++
++struct test_async_data {
++	struct test_dbus_context dbus;
++	struct ofono_dbus_queue *queue;
++};
++
++static gboolean test_async_complete(void *data)
++{
++	struct test_cancel_data *test = data;
++
++	__ofono_dbus_queue_reply_fn(test->queue,
++				dbus_message_new_method_return);
++	return G_SOURCE_REMOVE;
++}
++
++static DBusMessage *test_async_cb(DBusMessage *msg, void *data)
++{
++	DBG("");
++	g_idle_add(test_async_complete, data);
++	return NULL;
++}
++
++static void test_async_last_reply(DBusPendingCall *call, void *dbus)
++{
++	struct test_async_data *test =
++		G_CAST(dbus, struct test_async_data, dbus);
++
++	DBG("");
++	test_dbus_check_empty_reply(call, NULL);
++	g_main_loop_quit(test->dbus.loop);
++}
++
++static DBusMessage *test_async_handler(DBusConnection *conn,
++						DBusMessage *msg, void *data)
++{
++	struct test_cancel_data *test = data;
++
++	DBG("");
++	__ofono_dbus_queue_request(test->queue, test_async_cb, msg, data);
++	return NULL;
++}
++
++static const GDBusMethodTable test_async_methods[] = {
++	{ GDBUS_TEST_METHOD(test_async_handler) },
++	{ }
++};
++
++static void test_async_start(struct test_dbus_context *dbus)
++{
++	struct test_async_data *test =
++		G_CAST(dbus, struct test_async_data, dbus);
++
++	test_register_interface(test_async_methods, test);
++	test_client_call(dbus, 0, test_dbus_expect_empty_reply);
++	test_client_call(dbus, 1, test_dbus_expect_empty_reply);
++	test_client_call(dbus, 2, test_dbus_expect_empty_reply);
++	test_client_call(dbus, 3, test_async_last_reply);
++}
++
++static void test_async(void)
++{
++	struct test_async_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test_dbus_setup(&test.dbus);
++	test.dbus.start = test_async_start;
++	test.queue = __ofono_dbus_queue_new();
++
++	g_main_loop_run(test.dbus.loop);
++
++	__ofono_dbus_queue_free(test.queue);
++	test_dbus_shutdown(&test.dbus);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++/* ==== sync ==== */
++
++struct test_sync_data {
++	struct test_dbus_context dbus;
++	struct ofono_dbus_queue *queue;
++};
++
++static DBusMessage *test_sync_cb(DBusMessage *msg, void *data)
++{
++	DBG("");
++	return dbus_message_new_method_return(msg);
++}
++
++static void test_sync_reply(DBusPendingCall *call, void *dbus)
++{
++	struct test_sync_data *test = G_CAST(dbus, struct test_sync_data, dbus);
++
++	DBG("");
++	test_dbus_check_empty_reply(call, NULL);
++	g_main_loop_quit(test->dbus.loop);
++}
++
++static DBusMessage *test_sync_handler(DBusConnection *conn,
++						DBusMessage *msg, void *data)
++{
++	struct test_sync_data *test = data;
++
++	DBG("");
++
++	/* test_sync_cb immediately completes it */
++	__ofono_dbus_queue_request(test->queue, test_sync_cb, msg, test);
++	return NULL;
++}
++
++static const GDBusMethodTable test_sync_methods[] = {
++	{ GDBUS_TEST_METHOD(test_sync_handler) },
++	{ }
++};
++
++static void test_sync_start(struct test_dbus_context *dbus)
++{
++	struct test_sync_data *test = G_CAST(dbus, struct test_sync_data, dbus);
++
++	test_register_interface(test_sync_methods, test);
++	test_client_call(dbus, 0, test_sync_reply);
++}
++
++static void test_sync(void)
++{
++	struct test_sync_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test_dbus_setup(&test.dbus);
++	test.dbus.start = test_sync_start;
++	test.queue = __ofono_dbus_queue_new();
++
++	g_main_loop_run(test.dbus.loop);
++
++	__ofono_dbus_queue_free(test.queue);
++	test_dbus_shutdown(&test.dbus);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++/* ==== reply ==== */
++
++struct test_reply_data {
++	struct test_dbus_context dbus;
++	struct ofono_dbus_queue *queue;
++};
++
++static void test_reply_last_reply(DBusPendingCall *call, void *dbus)
++{
++	struct test_reply_data *test =
++		G_CAST(dbus, struct test_reply_data, dbus);
++
++	DBG("");
++	test_dbus_check_empty_reply(call, NULL);
++	g_main_loop_quit(test->dbus.loop);
++}
++
++static DBusMessage *test_reply_1(DBusMessage *msg, void *data)
++{
++	DBG("");
++	return NULL;
++}
++
++static DBusMessage *test_reply_2(DBusMessage *msg, void *data)
++{
++	DBG("");
++	return NULL;
++}
++
++static DBusMessage *test_reply_3(DBusMessage *msg, void *data)
++{
++	DBG("");
++	return NULL;
++}
++
++static DBusMessage *test_reply_4(DBusMessage *msg, void *data)
++{
++	DBG("");
++	return NULL;
++}
++
++static DBusMessage *test_reply_5(DBusMessage *msg, void *data)
++{
++	DBG("");
++	return dbus_message_new_method_return(msg);
++}
++
++static DBusMessage *test_reply_handler(DBusConnection *conn,
++						DBusMessage *msg, void *data)
++{
++	struct test_reply_data *test = data;
++	struct ofono_error error;
++	dbus_int32_t arg;
++
++	g_assert(dbus_message_get_args(msg, NULL, DBUS_TYPE_INT32, &arg,
++							DBUS_TYPE_INVALID));
++
++	DBG("%d", arg);
++	switch (arg) {
++	case 0:
++		/* Queue is empty, we can use __ofono_dbus_queue_set_pending */
++		g_assert(__ofono_dbus_queue_set_pending(test->queue, msg));
++		break;
++	case 1:
++	case 4:
++		/* Queue is not empty anymore */
++		g_assert(__ofono_dbus_queue_pending(test->queue));
++		g_assert(!__ofono_dbus_queue_set_pending(test->queue, msg));
++		__ofono_dbus_queue_request(test->queue, test_reply_1,
++								msg, NULL);
++		break;
++	case 2:
++		/* Same callback, different data */
++		__ofono_dbus_queue_request(test->queue, test_reply_1,
++								msg, test);
++		break;
++	case 3:
++		__ofono_dbus_queue_request(test->queue, test_reply_2,
++								msg, NULL);
++		break;
++	case 5:
++		__ofono_dbus_queue_request(test->queue, test_reply_3,
++								msg, NULL);
++		break;
++	case 6:
++		__ofono_dbus_queue_request(test->queue, test_reply_4,
++								msg, NULL);
++		break;
++	case 7:
++		/* Call the same method again */
++		__ofono_dbus_queue_request(test->queue, test_reply_4,
++								msg, NULL);
++		break;
++	case 8:
++		/* Call the last one */
++		__ofono_dbus_queue_request(test->queue, test_reply_5,
++								msg, NULL);
++
++		/* This completes the first one, with NULL handler */
++		__ofono_dbus_queue_reply_all_fn_param(test->queue, NULL, NULL);
++		g_assert(__ofono_dbus_queue_pending(test->queue));
++
++		/* And this one completes 2 others with test_reply_1 */
++		__ofono_dbus_queue_reply_all_fn(test->queue,
++					dbus_message_new_method_return);
++		g_assert(__ofono_dbus_queue_pending(test->queue));
++
++		/* This one test_reply_1 with different data */
++		__ofono_dbus_queue_reply_all_fn(test->queue,
++						__ofono_error_canceled);
++
++		/* And this one fails 2 others with test_reply_2 */
++		__ofono_dbus_queue_reply_all_fn(test->queue, NULL);
++
++		/* This one test_reply_3 with Failed */
++		__ofono_dbus_queue_reply_all_error(test->queue, NULL);
++
++		/* This one completes all test_reply_4 with NotSupported */
++		error.type = OFONO_ERROR_TYPE_ERRNO;
++		error.error = -EOPNOTSUPP;
++		__ofono_dbus_queue_reply_all_error(test->queue, &error);
++
++		/* test_reply_5 must be already completed */
++		g_assert(!__ofono_dbus_queue_pending(test->queue));
++
++		/* And this one does nothing */
++		__ofono_dbus_queue_reply_all_fn(test->queue,
++					dbus_message_new_method_return);
++		break;
++	}
++
++	return NULL;
++}
++
++static const GDBusMethodTable test_reply_methods[] = {
++	{ GDBUS_TEST_METHOD(test_reply_handler) },
++	{ }
++};
++
++static void test_reply_start(struct test_dbus_context *dbus)
++{
++	struct test_reply_data *test =
++		G_CAST(dbus, struct test_reply_data, dbus);
++
++	test_register_interface(test_reply_methods, test);
++	test_client_call(dbus, 0, test_expect_failed);
++	test_client_call(dbus, 1, test_dbus_expect_empty_reply);
++	test_client_call(dbus, 2, test_expect_canceled);
++	test_client_call(dbus, 3, test_expect_failed);
++	test_client_call(dbus, 4, test_dbus_expect_empty_reply);
++	test_client_call(dbus, 5, test_expect_failed);
++	test_client_call(dbus, 6, test_expect_not_supported);
++	test_client_call(dbus, 7, test_expect_not_supported);
++	test_client_call(dbus, 8, test_reply_last_reply);
++}
++
++static void test_reply(void)
++{
++	struct test_reply_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test_dbus_setup(&test.dbus);
++	test.dbus.start = test_reply_start;
++	test.queue = __ofono_dbus_queue_new();
++
++	g_main_loop_run(test.dbus.loop);
++
++	__ofono_dbus_queue_free(test.queue);
++	test_dbus_shutdown(&test.dbus);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++/* ==== ok ==== */
++
++struct test_ok_data {
++	struct test_dbus_context dbus;
++	struct ofono_dbus_queue *queue;
++};
++
++static DBusMessage *test_ok_1(DBusMessage *msg, void *data)
++{
++	DBG("");
++	return NULL;
++}
++
++static DBusMessage *test_ok_2(DBusMessage *msg, void *data)
++{
++	DBG("");
++	return dbus_message_new_method_return(msg);
++}
++
++static void test_ok_last_reply(DBusPendingCall *call, void *dbus)
++{
++	struct test_ok_data *test = G_CAST(dbus, struct test_ok_data, dbus);
++
++	DBG("");
++	test_dbus_check_empty_reply(call, NULL);
++	g_main_loop_quit(test->dbus.loop);
++}
++
++static DBusMessage *test_ok_handler(DBusConnection *conn,
++						DBusMessage *msg, void *data)
++{
++	struct test_ok_data *test = data;
++	dbus_int32_t arg;
++
++	g_assert(dbus_message_get_args(msg, NULL, DBUS_TYPE_INT32, &arg,
++							DBUS_TYPE_INVALID));
++
++	DBG("%d", arg);
++	if (arg == 0) {
++		/* This is the first call, it blocks the queue */
++		__ofono_dbus_queue_request(test->queue, test_ok_1, msg, test);
++	} else {
++		g_assert(__ofono_dbus_queue_pending(test->queue));
++		__ofono_dbus_queue_request(test->queue, test_ok_2, msg, test);
++		/* This is the second call, complete the first one.
++		 * That unblocks the seconds one. */
++		__ofono_dbus_queue_reply_ok(test->queue);
++
++		/* This call has no effect, it's actually an error (the
++		 * message has already been replied to) but such situation
++		 * is handled by __ofono_dbus_queue_reply_msg */
++		__ofono_dbus_queue_reply_msg(test->queue,
++					dbus_message_new_method_return(msg));
++
++		/* This one does nothing too */
++		__ofono_dbus_queue_reply_fn(test->queue, NULL);
++	}
++
++	return NULL;
++}
++
++static const GDBusMethodTable test_ok_methods[] = {
++	{ GDBUS_TEST_METHOD(test_ok_handler) },
++	{ }
++};
++
++static void test_ok_start(struct test_dbus_context *dbus)
++{
++	struct test_ok_data *test = G_CAST(dbus, struct test_ok_data, dbus);
++
++	test_register_interface(test_ok_methods, test);
++	test_client_call(dbus, 0, test_dbus_check_empty_reply);
++	test_client_call(dbus, 1, test_ok_last_reply);
++}
++
++static void test_ok(void)
++{
++	struct test_ok_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test_dbus_setup(&test.dbus);
++	test.dbus.start = test_ok_start;
++	test.queue = __ofono_dbus_queue_new();
++
++	g_main_loop_run(test.dbus.loop);
++
++	__ofono_dbus_queue_free(test.queue);
++	test_dbus_shutdown(&test.dbus);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++#define TEST_(name) "/dbus-queue/" name
++
++int main(int argc, char *argv[])
++{
++	int i;
++
++	g_test_init(&argc, &argv, NULL);
++	for (i = 1; i < argc; i++) {
++		const char *arg = argv[i];
++		if (!strcmp(arg, "-d") || !strcmp(arg, "--debug")) {
++			test_debug = TRUE;
++		} else {
++			GWARN("Unsupported command line option %s", arg);
++		}
++	}
++
++	gutil_log_timestamp = FALSE;
++	gutil_log_default.level = g_test_verbose() ?
++		GLOG_LEVEL_VERBOSE : GLOG_LEVEL_NONE;
++	__ofono_log_init("test-dbus-queue",
++				g_test_verbose() ? "*" : NULL,
++				FALSE);
++
++	g_test_add_func(TEST_("basic"), test_basic);
++	g_test_add_func(TEST_("free"), test_free);
++	g_test_add_func(TEST_("cancel"), test_cancel);
++	g_test_add_func(TEST_("async"), test_async);
++	g_test_add_func(TEST_("sync"), test_sync);
++	g_test_add_func(TEST_("reply"), test_reply);
++	g_test_add_func(TEST_("ok"), test_ok);
++
++	return g_test_run();
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/unit/test-dbus.c b/unit/test-dbus.c
+new file mode 100644
+index 00000000..c002f637
+--- /dev/null
++++ b/unit/test-dbus.c
+@@ -0,0 +1,395 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2018-2021 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ *  GNU General Public License for more details.
++ */
++
++#include "test-dbus.h"
++#include "ofono.h"
++
++#include <dbus/dbus-glib-lowlevel.h>
++
++#include <unistd.h>
++
++struct test_polkit_auth_check {
++	void (*function)(dbus_bool_t authorized, void *user_data);
++	void *user_data;
++};
++
++struct test_dbus_watch {
++	struct test_dbus_watch *next;
++	guint id;
++	DBusConnection *connection;
++	GDBusWatchFunction disconnect;
++	GDBusDestroyFunction destroy;
++	void *user_data;
++};
++
++struct test_dbus_watch *test_dbus_watch_list;
++static unsigned int test_last_id;
++
++static gboolean polkit_check_authorization_cb(gpointer data)
++{
++	struct test_polkit_auth_check *check = data;
++
++	check->function(TRUE, check->user_data);
++	g_free(check);
++	return G_SOURCE_REMOVE;
++}
++
++int polkit_check_authorization(DBusConnection *conn,
++		const char *action, gboolean interaction,
++		void (*function)(dbus_bool_t authorized, void *user_data),
++		void *user_data, int timeout)
++{
++	struct test_polkit_auth_check *check =
++		g_new(struct test_polkit_auth_check, 1);
++
++	check->function = function;
++	check->user_data = user_data;
++	g_idle_add(polkit_check_authorization_cb, check);
++	return 0;
++}
++
++static guint test_dbus_add_watch(DBusConnection *connection,
++		GDBusWatchFunction disconnect, GDBusDestroyFunction destroy,
++		void *user_data)
++{
++	struct test_dbus_watch *watch = g_new0(struct test_dbus_watch, 1);
++
++	test_last_id++;
++	watch->id = test_last_id;
++	watch->connection = dbus_connection_ref(connection);
++	watch->disconnect = disconnect;
++	watch->destroy = destroy;
++	watch->user_data = user_data;
++	watch->next = test_dbus_watch_list;
++	test_dbus_watch_list = watch;
++	return test_last_id;
++}
++
++static gboolean test_dbus_watch_disconnect_one(void)
++{
++	struct test_dbus_watch *watch = test_dbus_watch_list;
++
++	while (watch) {
++		if (watch->disconnect) {
++			GDBusWatchFunction disconnect = watch->disconnect;
++
++			watch->disconnect = NULL;
++			disconnect(watch->connection, watch->user_data);
++			return TRUE;
++		}
++		watch = watch->next;
++	}
++	return FALSE;
++}
++
++void test_dbus_watch_disconnect_all(void)
++{
++	while (test_dbus_watch_disconnect_one());
++}
++
++static void test_dbus_watch_free(struct test_dbus_watch *watch)
++{
++	if (watch->destroy) {
++		watch->destroy(watch->user_data);
++	}
++	dbus_connection_unref(watch->connection);
++	g_free(watch);
++}
++
++static gboolean test_dbus_watch_remove_one(void)
++{
++	struct test_dbus_watch *watch = test_dbus_watch_list;
++
++	if (watch) {
++		test_dbus_watch_list = watch->next;
++		test_dbus_watch_free(watch);
++		return TRUE;
++	}
++	return FALSE;
++}
++
++void test_dbus_watch_remove_all(void)
++{
++	while (test_dbus_watch_remove_one());
++}
++
++guint g_dbus_add_signal_watch(DBusConnection *connection, const char *sender,
++		const char *path, const char *interface, const char *member,
++		GDBusSignalFunction function, void *user_data,
++		GDBusDestroyFunction destroy)
++{
++    return test_dbus_add_watch(connection, NULL, destroy, user_data);
++}
++
++guint g_dbus_add_disconnect_watch(DBusConnection *connection, const char *name,
++		GDBusWatchFunction func, void *user_data,
++		GDBusDestroyFunction destroy)
++{
++	return test_dbus_add_watch(connection, func, destroy, user_data);
++}
++
++gboolean g_dbus_remove_watch(DBusConnection *connection, guint id)
++{
++	struct test_dbus_watch *prev = NULL;
++	struct test_dbus_watch *watch = test_dbus_watch_list;
++
++	while (watch) {
++		if (watch->id == id) {
++			if (prev) {
++				prev->next = watch->next;
++			} else {
++				test_dbus_watch_list = watch->next;
++			}
++			test_dbus_watch_free(watch);
++			return TRUE;
++		}
++		prev = watch;
++		watch = watch->next;
++	}
++	ofono_warn("Unexpected id %u", id);
++	return FALSE;
++}
++
++static gboolean test_dbus_loop_quit(gpointer data)
++{
++	g_main_loop_quit(data);
++	return G_SOURCE_REMOVE;
++}
++
++static void test_dbus_loop_quit_later(GMainLoop *loop)
++{
++	g_idle_add(test_dbus_loop_quit, loop);
++}
++
++DBusMessage *test_dbus_find_signal(struct test_dbus_context *test,
++		const char *path, const char *iface, const char *member)
++{
++	GSList *l;
++
++	for (l = test->client_signals; l; l = l->next) {
++		DBusMessage *msg = l->data;
++
++		if (!g_strcmp0(dbus_message_get_interface(msg), iface) &&
++			!g_strcmp0(dbus_message_get_member(msg), member) &&
++			!g_strcmp0(dbus_message_get_path(msg), path)) {
++			return msg;
++		}
++	}
++	return NULL;
++}
++
++DBusMessage *test_dbus_take_signal(struct test_dbus_context *test,
++		const char *path, const char *iface, const char *member)
++{
++	DBusMessage *m = test_dbus_find_signal(test, path, iface, member);
++
++	if (m) {
++		test->client_signals = g_slist_remove(test->client_signals, m);
++		return m;
++	}
++	return NULL;
++}
++
++int test_dbus_get_int32(DBusMessageIter *it)
++{
++	dbus_uint32_t value;
++
++	g_assert(dbus_message_iter_get_arg_type(it) == DBUS_TYPE_INT32);
++	dbus_message_iter_get_basic(it, &value);
++	dbus_message_iter_next(it);
++	return value;
++}
++
++gboolean test_dbus_get_bool(DBusMessageIter *it)
++{
++	dbus_bool_t value;
++
++	g_assert(dbus_message_iter_get_arg_type(it) == DBUS_TYPE_BOOLEAN);
++	dbus_message_iter_get_basic(it, &value);
++	dbus_message_iter_next(it);
++	return value;
++}
++
++const char *test_dbus_get_string(DBusMessageIter *it)
++{
++	const char *value;
++
++	g_assert(dbus_message_iter_get_arg_type(it) == DBUS_TYPE_STRING);
++	dbus_message_iter_get_basic(it, &value);
++	dbus_message_iter_next(it);
++	return value;
++}
++
++const char *test_dbus_get_object_path(DBusMessageIter *it)
++{
++	const char *value;
++
++	g_assert(dbus_message_iter_get_arg_type(it) == DBUS_TYPE_OBJECT_PATH);
++	dbus_message_iter_get_basic(it, &value);
++	dbus_message_iter_next(it);
++	return value;
++}
++
++void test_dbus_check_empty_reply(DBusPendingCall *call, void *unused)
++{
++	DBusMessage *reply = dbus_pending_call_steal_reply(call);
++	DBusMessageIter it;
++
++	g_assert(dbus_message_get_type(reply) ==
++					DBUS_MESSAGE_TYPE_METHOD_RETURN);
++
++	dbus_message_iter_init(reply, &it);
++	g_assert(dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_INVALID);
++
++	dbus_message_unref(reply);
++	dbus_pending_call_unref(call);
++}
++
++void test_dbus_expect_empty_reply(DBusPendingCall *call, void *data)
++{
++	struct test_dbus_context *test = data;
++
++	DBG("");
++	test_dbus_check_empty_reply(call, data);
++	test_dbus_loop_quit_later(test->loop);
++}
++
++void test_dbus_check_error_reply(DBusPendingCall *call, const char *error)
++{
++	DBusMessage *msg = dbus_pending_call_steal_reply(call);
++	const char *name;
++
++	g_assert(dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_ERROR);
++	name = dbus_message_get_error_name(msg);
++	g_assert_cmpstr(name,==,error);
++	dbus_message_unref(msg);
++	dbus_pending_call_unref(call);
++}
++
++void test_dbus_check_string_reply(DBusPendingCall *call, const char *str)
++{
++	DBusMessage *reply = dbus_pending_call_steal_reply(call);
++	DBusMessageIter it;
++
++	DBG("");
++	g_assert(dbus_message_get_type(reply) ==
++					DBUS_MESSAGE_TYPE_METHOD_RETURN);
++
++	dbus_message_iter_init(reply, &it);
++	g_assert_cmpstr(test_dbus_get_string(&it),==,str);
++	g_assert(dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_INVALID);
++
++	dbus_message_unref(reply);
++}
++
++void test_dbus_message_unref(gpointer data)
++{
++	dbus_message_unref(data);
++}
++
++static DBusHandlerResult test_dbus_client_message_cb(DBusConnection *conn,
++						DBusMessage *msg, void *data)
++{
++	struct test_dbus_context *test = data;
++
++	if (dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_SIGNAL) {
++		DBG("signal %s.%s \"%s\"", dbus_message_get_interface(msg),
++						dbus_message_get_member(msg),
++						dbus_message_get_path(msg));
++		test->client_signals = g_slist_append(test->client_signals,
++						dbus_message_ref(msg));
++		if (test->handle_signal) {
++			test->handle_signal(test, msg);
++		}
++		return DBUS_HANDLER_RESULT_HANDLED;
++	} else {
++		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
++	}
++}
++
++static void test_dbus_connection_cb(DBusServer *server, DBusConnection *conn,
++								void *data)
++{
++	struct test_dbus_context *test = data;
++
++	DBG("");
++	g_assert(!test->server_connection);
++	test->server_connection = dbus_connection_ref(conn);
++	dbus_connection_setup_with_g_main(test->server_connection,
++				g_main_loop_get_context(test->loop));
++
++	/* Start the test */
++	__ofono_dbus_init(test->server_connection);
++	test->start(test);
++}
++
++void test_dbus_setup(struct test_dbus_context *test)
++{
++	char *path;
++	char *address;
++	GMainContext *context;
++
++	/* Generate unique non-existent path */
++	path = g_dir_make_tmp ("test-dbus.XXXXXX", NULL);
++	g_assert(path);
++	rmdir(path);
++
++	address = g_strconcat("unix:path=", path, NULL);
++
++	test->loop = g_main_loop_new(NULL, TRUE);
++	context = g_main_loop_get_context(test->loop);
++
++	test->server = dbus_server_listen(address, NULL);
++	g_assert(test->server);
++	DBG("listening on %s", address);
++
++	dbus_server_setup_with_g_main(test->server, context);
++	dbus_server_set_new_connection_function(test->server,
++					test_dbus_connection_cb, test, NULL);
++
++	test->client_connection = dbus_connection_open_private(address, NULL);
++	g_assert(test->client_connection);
++	dbus_connection_setup_with_g_main(test->client_connection, context);
++	g_assert(dbus_connection_add_filter(test->client_connection,
++				test_dbus_client_message_cb, test, NULL));
++	DBG("connected on %s", address);
++	g_free(address);
++	g_free(path);
++}
++
++void test_dbus_shutdown(struct test_dbus_context *test)
++{
++	test_dbus_watch_disconnect_all();
++	test_dbus_watch_remove_all();
++	__ofono_dbus_cleanup();
++	if (test->server_connection) {
++		dbus_connection_close(test->server_connection);
++		dbus_connection_unref(test->server_connection);
++	}
++	dbus_connection_close(test->client_connection);
++	dbus_connection_unref(test->client_connection);
++	dbus_server_disconnect(test->server);
++	dbus_server_unref(test->server);
++	g_main_loop_unref(test->loop);
++	g_slist_free_full(test->client_signals, test_dbus_message_unref);
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/unit/test-dbus.h b/unit/test-dbus.h
+new file mode 100644
+index 00000000..0333b666
+--- /dev/null
++++ b/unit/test-dbus.h
+@@ -0,0 +1,61 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2018-2021 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ *  GNU General Public License for more details.
++ */
++
++#ifndef TEST_DBUS_H
++#define TEST_DBUS_H
++
++#include <ofono/gdbus.h>
++
++struct test_dbus_context {
++	GMainLoop *loop;
++	DBusServer *server;
++	DBusConnection *server_connection;
++	DBusConnection *client_connection;
++	GSList* client_signals;
++	void (*start)(struct test_dbus_context *test);
++	void (*handle_signal)(struct test_dbus_context *test, DBusMessage *msg);
++	guint timeout_id;
++};
++
++void test_dbus_setup(struct test_dbus_context *context);
++void test_dbus_shutdown(struct test_dbus_context *context);
++
++void test_dbus_watch_disconnect_all(void);
++void test_dbus_watch_remove_all(void);
++
++int test_dbus_get_int32(DBusMessageIter *it);
++gboolean test_dbus_get_bool(DBusMessageIter *it);
++const char *test_dbus_get_string(DBusMessageIter *it);
++const char *test_dbus_get_object_path(DBusMessageIter *it);
++
++void test_dbus_check_error_reply(DBusPendingCall *call, const char *error);
++void test_dbus_check_string_reply(DBusPendingCall *call, const char *str);
++void test_dbus_check_empty_reply(DBusPendingCall *call, void *unused);
++void test_dbus_expect_empty_reply(DBusPendingCall *call, void *data);
++
++DBusMessage *test_dbus_find_signal(struct test_dbus_context *test,
++		const char *path, const char *iface, const char *member);
++DBusMessage *test_dbus_take_signal(struct test_dbus_context *test,
++		const char *path, const char *iface, const char *member);
++
++#endif /* TEST_DBUS_H */
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/unit/test-sailfish_access.c b/unit/test-sailfish_access.c
+new file mode 100644
+index 00000000..dec71dc4
+--- /dev/null
++++ b/unit/test-sailfish_access.c
+@@ -0,0 +1,302 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2019-2021 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ *  GNU General Public License for more details.
++ */
++
++#include "ofono.h"
++
++#include <dbusaccess_peer.h>
++#include <dbusaccess_policy.h>
++#include <dbusaccess_system.h>
++
++#include <gutil_idlepool.h>
++#include <gutil_log.h>
++
++#include <errno.h>
++
++static GUtilIdlePool* peer_pool;
++
++extern struct ofono_plugin_desc __ofono_builtin_sailfish_access;
++extern const char *sailfish_access_config_file;
++
++#define TMP_DIR_TEMPLATE "test-sailfish_access-XXXXXX"
++
++#define ROOT_SENDER ":1.100"
++#define PRIVILEGED_SENDER ":1.200"
++#define NON_PRIVILEGED_SENDER ":1.300"
++#define INVALID_SENDER ":1.400"
++
++#define NEMO_UID (100000)
++#define NEMO_GID (100000)
++#define PRIVILEGED_GID (996)
++#define SAILFISH_RADIO_GID (997)
++
++/*==========================================================================*
++ * Stubs
++ *==========================================================================*/
++
++DAPeer *da_peer_get(DA_BUS bus, const char *name)
++{
++	if (name && g_strcmp0(name, INVALID_SENDER)) {
++		gsize len = strlen(name);
++		DAPeer *peer = g_malloc0(sizeof(DAPeer) + len + 1);
++		char *buf = (char*)(peer + 1);
++		strcpy(buf, name);
++		peer->name = buf;
++		gutil_idle_pool_add(peer_pool, peer, g_free);
++		if (!strcmp(name, PRIVILEGED_SENDER)) {
++			peer->cred.euid = NEMO_UID;
++			peer->cred.egid = PRIVILEGED_GID;
++		} else if (strcmp(name, ROOT_SENDER)) {
++			peer->cred.euid = NEMO_UID;
++			peer->cred.egid = NEMO_GID;
++		}
++		return peer;
++	} else {
++		return NULL;
++	}
++}
++
++void da_peer_flush(DA_BUS bus, const char *name)
++{
++	gutil_idle_pool_drain(peer_pool);
++}
++
++/*
++ * The build environment doesn't necessarily have these users and groups.
++ * And yet, sailfish access plugin depends on those.
++ */
++
++int da_system_uid(const char *user)
++{
++	if (!g_strcmp0(user, "nemo")) {
++		return NEMO_UID;
++	} else {
++		return -1;
++	}
++}
++
++int da_system_gid(const char *group)
++{
++	if (!g_strcmp0(group, "sailfish-radio")) {
++		return SAILFISH_RADIO_GID;
++	} else if (!g_strcmp0(group, "privileged")) {
++		return PRIVILEGED_GID;
++	} else {
++		return -1;
++	}
++}
++
++/*==========================================================================*
++ * Tests
++ *==========================================================================*/
++
++static void test_register()
++{
++	g_assert(__ofono_builtin_sailfish_access.init() == 0);
++	g_assert(__ofono_builtin_sailfish_access.init() == -EALREADY);
++	__ofono_builtin_sailfish_access.exit();
++	__ofono_builtin_sailfish_access.exit();
++}
++
++static void test_default()
++{
++	const char *default_config_file = sailfish_access_config_file;
++
++	sailfish_access_config_file = "/no such file";
++	g_assert(__ofono_builtin_sailfish_access.init() == 0);
++
++	/* root and privileged are allowed to Dial by default */
++	g_assert(ofono_dbus_access_method_allowed(ROOT_SENDER,
++				OFONO_DBUS_ACCESS_INTF_VOICECALLMGR,
++				OFONO_DBUS_ACCESS_VOICECALLMGR_DIAL, NULL));
++	g_assert(ofono_dbus_access_method_allowed(PRIVILEGED_SENDER,
++				OFONO_DBUS_ACCESS_INTF_VOICECALLMGR,
++				OFONO_DBUS_ACCESS_VOICECALLMGR_DIAL, NULL));
++
++	/* Non-privileged and unknown users are not */
++	g_assert(!ofono_dbus_access_method_allowed(NON_PRIVILEGED_SENDER,
++				OFONO_DBUS_ACCESS_INTF_VOICECALLMGR,
++				OFONO_DBUS_ACCESS_VOICECALLMGR_DIAL, NULL));
++	g_assert(!ofono_dbus_access_method_allowed(INVALID_SENDER,
++				OFONO_DBUS_ACCESS_INTF_VOICECALLMGR,
++				OFONO_DBUS_ACCESS_VOICECALLMGR_DIAL, NULL));
++
++	/* Unknown interfaces/methods are allowed */
++	g_assert(ofono_dbus_access_method_allowed(NON_PRIVILEGED_SENDER,
++				OFONO_DBUS_ACCESS_INTF_COUNT, 0, NULL));
++	g_assert(ofono_dbus_access_method_allowed(NON_PRIVILEGED_SENDER,
++				OFONO_DBUS_ACCESS_INTF_MESSAGE, -1, NULL));
++	g_assert(ofono_dbus_access_method_allowed(NON_PRIVILEGED_SENDER,
++				OFONO_DBUS_ACCESS_INTF_MESSAGE,
++				OFONO_DBUS_ACCESS_MESSAGE_METHOD_COUNT, NULL));
++
++	__ofono_builtin_sailfish_access.exit();
++
++	/* Restore the defaults */
++	sailfish_access_config_file = default_config_file;
++}
++
++struct test_config_data {
++	gboolean allowed;
++	const char *sender;
++	enum ofono_dbus_access_intf intf;
++	int method;
++	const char *config;
++};
++
++static const struct test_config_data config_tests [] = {
++	{
++		TRUE, NON_PRIVILEGED_SENDER,
++		OFONO_DBUS_ACCESS_INTF_VOICECALL,
++		OFONO_DBUS_ACCESS_VOICECALL_HANGUP,
++		"[org.ofono.VoiceCall]\n"
++		"Hangup = " DA_POLICY_VERSION "; * = allow \n"
++	},{
++		FALSE, NON_PRIVILEGED_SENDER,
++		OFONO_DBUS_ACCESS_INTF_VOICECALL,
++		OFONO_DBUS_ACCESS_VOICECALL_HANGUP,
++		"[org.ofono.VoiceCall]\n"
++		"Hangup = " DA_POLICY_VERSION "; * = allow \n"
++		"=========" /* Invalid key file */
++	},{
++		FALSE, NON_PRIVILEGED_SENDER,
++		OFONO_DBUS_ACCESS_INTF_VOICECALLMGR,
++		OFONO_DBUS_ACCESS_VOICECALLMGR_DIAL,
++		"[Common]\n"
++		"DefaultAccess = " DA_POLICY_VERSION "; * = allow \n"
++		"[org.ofono.VoiceCallManager]\n"
++		"Dial = " DA_POLICY_VERSION "; * = deny\n"
++			"group(privileged) = allow\n"
++	},{
++		TRUE, NON_PRIVILEGED_SENDER,
++		OFONO_DBUS_ACCESS_INTF_VOICECALLMGR,
++		OFONO_DBUS_ACCESS_VOICECALLMGR_TRANSFER,
++		"[Common]\n"
++		"DefaultAccess = " DA_POLICY_VERSION "; * = allow \n"
++		"[org.ofono.VoiceCallManager]\n"
++		"Dial = " DA_POLICY_VERSION "; * = deny; "
++			"group(privileged) = allow \n"
++	},{
++		TRUE, PRIVILEGED_SENDER,
++		OFONO_DBUS_ACCESS_INTF_VOICECALLMGR,
++		OFONO_DBUS_ACCESS_VOICECALLMGR_DIAL,
++		"[Common]\n"
++		"DefaultAccess = " DA_POLICY_VERSION "; * = allow \n"
++		"[org.ofono.VoiceCallManager]\n"
++		"Dial = " DA_POLICY_VERSION "; * = deny; "
++			"group(privileged) = allow \n"
++	},{
++		TRUE, NON_PRIVILEGED_SENDER,
++		OFONO_DBUS_ACCESS_INTF_VOICECALLMGR,
++		OFONO_DBUS_ACCESS_VOICECALLMGR_DIAL,
++		"[Common]\n"
++		"DefaultAccess = " DA_POLICY_VERSION "; * = allow \n"
++		"[org.ofono.VoiceCallManager]\n"
++		"* = invalid"
++	},{
++		FALSE, NON_PRIVILEGED_SENDER,
++		OFONO_DBUS_ACCESS_INTF_VOICECALLMGR,
++		OFONO_DBUS_ACCESS_VOICECALLMGR_DIAL,
++		"[Common]\n"
++		"DefaultAccess = " DA_POLICY_VERSION "; * = allow \n"
++		"[org.ofono.VoiceCallManager]\n"
++		"* = " DA_POLICY_VERSION "; * = deny \n" /* <= Applied */
++	},{
++		TRUE, NON_PRIVILEGED_SENDER,
++		OFONO_DBUS_ACCESS_INTF_VOICECALL,
++		OFONO_DBUS_ACCESS_VOICECALL_HANGUP,
++		"[Common]\n" /* DefaultAccess gets applied */
++		"DefaultAccess = " DA_POLICY_VERSION "; * = allow \n"
++		"[org.ofono.VoiceCallManager]\n"
++		"* = " DA_POLICY_VERSION "; * = deny \n"
++	},{
++		TRUE, NON_PRIVILEGED_SENDER,
++		OFONO_DBUS_ACCESS_INTF_VOICECALLMGR,
++		OFONO_DBUS_ACCESS_VOICECALLMGR_DIAL,
++		"[org.ofono.VoiceCallManager]\n"
++		"* = " DA_POLICY_VERSION "; * = allow \n" /* <= Applied */
++		"Dial = invalid \n"
++	},{
++		FALSE, PRIVILEGED_SENDER,
++		OFONO_DBUS_ACCESS_INTF_VOICECALLMGR,
++		OFONO_DBUS_ACCESS_VOICECALLMGR_DIAL,
++		"[org.ofono.VoiceCallManager]\n"
++		"* = " DA_POLICY_VERSION "; * = allow \n"
++		"Dial = " DA_POLICY_VERSION "; * = deny \n"  /* <= Applied */
++	}
++};
++
++static void test_config(gconstpointer test_data)
++{
++	const struct test_config_data *test = test_data;
++	const char *default_config_file = sailfish_access_config_file;
++	char *dir = g_dir_make_tmp(TMP_DIR_TEMPLATE, NULL);
++	char *file = g_strconcat(dir, "/test.conf", NULL);
++
++	/* Write temporary config file */
++	sailfish_access_config_file = file;
++	g_assert(g_file_set_contents(file, test->config, -1, NULL));
++
++	g_assert(__ofono_builtin_sailfish_access.init() == 0);
++	g_assert(ofono_dbus_access_method_allowed(test->sender,
++			test->intf, test->method, NULL) == test->allowed);
++	__ofono_builtin_sailfish_access.exit();
++
++	/* Restore the defaults */
++	sailfish_access_config_file = default_config_file;
++
++	remove(file);
++	remove(dir);
++
++	g_free(file);
++	g_free(dir);
++}
++
++#define TEST_(test) "/sailfish_access/" test
++
++int main(int argc, char *argv[])
++{
++	int i, ret;
++
++	peer_pool = gutil_idle_pool_new();
++	g_test_init(&argc, &argv, NULL);
++
++	gutil_log_timestamp = FALSE;
++	gutil_log_default.level = g_test_verbose() ?
++		GLOG_LEVEL_VERBOSE : GLOG_LEVEL_NONE;
++	__ofono_log_init("test-sailfish_access",
++				g_test_verbose() ? "*" : NULL,
++				FALSE);
++
++	g_test_add_func(TEST_("register"), test_register);
++	g_test_add_func(TEST_("default"), test_default);
++	for (i = 0; i < G_N_ELEMENTS(config_tests); i++) {
++		char* name = g_strdup_printf(TEST_("config/%d"), i + 1);
++		const struct test_config_data *test = config_tests + i;
++
++		g_test_add_data_func(name, test, test_config);
++		g_free(name);
++	}
++	ret = g_test_run();
++	gutil_idle_pool_unref(peer_pool);
++	return ret;
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
