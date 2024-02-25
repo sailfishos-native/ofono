@@ -84,6 +84,7 @@ autoreconf --force --install
 %configure --disable-static \
     --enable-test \
     --enable-sailfish-bt \
+    --enable-sailfish-pushforwarder \
     --enable-sailfish-access \
     --disable-rilmodem \
     --disable-isimodem \
