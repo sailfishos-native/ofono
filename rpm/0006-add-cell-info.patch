@@ -1,0 +1,3527 @@
+diff --git a/Makefile.am b/Makefile.am
+index e2e8826f..08d7f1c2 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -175,6 +175,7 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
+ 			include/handsfree.h \
+ 			include/handsfree-audio.h include/siri.h \
+ 			include/netmon.h include/lte.h include/ims.h \
++			include/cell-info.h \
+ 			include/storage.h include/dbus-access.h
+ 
+ nodist_pkginclude_HEADERS = include/version.h
+@@ -696,6 +697,8 @@ src_ofonod_SOURCES = $(builtin_sources) $(gatchat_sources) src/ofono.ver \
+ 			src/hfp.h src/siri.c \
+ 			src/netmon.c src/lte.c src/ims.c \
+ 			src/netmonagent.c src/netmonagent.h \
++			src/cell-info.c src/cell-info-dbus.c \
++			src/cell-info-control.c \
+ 			src/module.c \
+ 			src/provisiondb.h src/provisiondb.c \
+ 			src/provision.c
+@@ -887,6 +890,31 @@ unit_test_common_SOURCES = unit/test-common.c src/common.c src/util.c
+ unit_test_common_LDADD = @GLIB_LIBS@ $(ell_ldadd)
+ unit_objects += $(unit_test_common_OBJECTS)
+ 
++unit_test_cell_info_SOURCES = unit/test-cell-info.c src/cell-info.c src/log.c
++unit_test_cell_info_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT)
++unit_test_cell_info_LDADD = @GLIB_LIBS@ -ldl
++unit_objects += $(unit_test_cell_info_OBJECTS)
++unit_tests += unit/test-cell-info
++
++unit_test_cell_info_control_SOURCES = unit/test-cell-info-control.c \
++			unit/fake_cell_info.c src/cell-info.c \
++			src/cell-info-control.c src/log.c
++unit_test_cell_info_control_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT)
++unit_test_cell_info_control_LDADD = @GLIB_LIBS@ -ldl
++unit_objects += $(unit_test_cell_info_control_OBJECTS)
++unit_tests += unit/test-cell-info-control
++
++unit_test_cell_info_dbus_SOURCES = unit/test-dbus.c \
++			unit/test-cell-info-dbus.c unit/fake_cell_info.c \
++			src/cell-info.c src/cell-info-dbus.c \
++			src/cell-info-control.c gdbus/object.c \
++			src/dbus-clients.c src/dbus.c src/log.c
++unit_test_cell_info_dbus_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT) \
++			@DBUS_GLIB_CFLAGS@
++unit_test_cell_info_dbus_LDADD = @DBUS_GLIB_LIBS@ @GLIB_LIBS@ -ldl
++unit_objects += $(unit_test_cell_info_dbus_OBJECTS)
++unit_tests += unit/test-cell-info-dbus
++
+ unit_test_util_SOURCES = unit/test-util.c src/util.c
+ unit_test_util_LDADD = @GLIB_LIBS@ $(ell_ldadd)
+ unit_objects += $(unit_test_utils_OBJECTS)
+diff --git a/configure.ac b/configure.ac
+index a458cca5..ce5458eb 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -137,6 +137,11 @@ PKG_CHECK_MODULES(GLIB, glib-2.0 >= 2.68, [
+ AC_SUBST(GLIB_CFLAGS)
+ AC_SUBST(GLIB_LIBS)
+ 
++PKG_CHECK_MODULES(GOBJECT, gobject-2.0, dummy=yes,
++				AC_MSG_ERROR(GObject is required))
++GLIB_CFLAGS="$GLIB_CFLAGS $GOBJECT_CFLAGS"
++GLIB_LIBS="$GLIB_LIBS $GOBJECT_LIBS"
++
+ PKG_CHECK_MODULES(DBUS, dbus-1 >= 1.6, dummy=yes,
+ 				AC_MSG_ERROR(D-Bus >= 1.6 is required))
+ AC_SUBST(DBUS_CFLAGS)
+diff --git a/include/cell-info.h b/include/cell-info.h
+new file mode 100644
+index 00000000..f07a1108
+--- /dev/null
++++ b/include/cell-info.h
+@@ -0,0 +1,144 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2017-2021 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ */
++
++#ifndef OFONO_CELL_INFO_H
++#define OFONO_CELL_INFO_H
++
++/* This API exists since mer/1.24+git2 */
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#include <ofono/types.h>
++#include <stdint.h>
++
++enum ofono_cell_type {
++	OFONO_CELL_TYPE_GSM,
++	OFONO_CELL_TYPE_WCDMA,
++	OFONO_CELL_TYPE_LTE,
++	OFONO_CELL_TYPE_NR /* Since 1.29+git8 */
++};
++
++#define OFONO_CELL_INVALID_VALUE (INT_MAX)
++#define OFONO_CELL_INVALID_VALUE_INT64 (INT64_MAX)
++
++struct ofono_cell_info_gsm {
++	int mcc;            /* Mobile Country Code (0..999) */
++	int mnc;            /* Mobile Network Code (0..999) */
++	int lac;            /* Location Area Code (0..65535) */
++	int cid;            /* GSM Cell Identity (0..65535) TS 27.007 */
++	int arfcn;          /* 16-bit GSM Absolute RF channel number */
++	int bsic;           /* 6-bit Base Station Identity Code */
++	int signalStrength; /* (0-31, 99) TS 27.007 */
++	int bitErrorRate;   /* (0-7, 99) TS 27.007 */
++	int timingAdvance;  /* Timing Advance. 1 period = 48/13 us */
++};
++
++struct ofono_cell_info_wcdma {
++	int mcc;            /* Mobile Country Code (0..999) */
++	int mnc;            /* Mobile Network Code (0..999) */
++	int lac;            /* Location Area Code (0..65535) */
++	int cid;            /* UMTS Cell Identity (0..268435455) TS 25.331 */
++	int psc;            /* Primary Scrambling Code (0..511) TS 25.331) */
++	int uarfcn;         /* 16-bit UMTS Absolute RF Channel Number */
++	int signalStrength; /* (0-31, 99) TS 27.007 */
++	int bitErrorRate;   /* (0-7, 99) TS 27.007 */
++};
++
++struct ofono_cell_info_lte {
++	int mcc;            /* Mobile Country Code (0..999) */
++	int mnc;            /* Mobile Network Code (0..999) */
++	int ci;             /* Cell Identity */
++	int pci;            /* Physical cell id (0..503) */
++	int tac;            /* Tracking area code */
++	int earfcn;         /* 18-bit LTE Absolute RC Channel Number */
++	int signalStrength; /* (0-31, 99) TS 27.007 8.5 */
++	int rsrp;           /* Reference Signal Receive Power TS 36.133 */
++	int rsrq;           /* Reference Signal Receive Quality TS 36.133 */
++	int rssnr;          /* Reference Signal-to-Noise Ratio TS 36.101*/
++	int cqi;            /* Channel Quality Indicator TS 36.101 */
++	int timingAdvance;  /* (Distance = 300m/us) TS 36.321 */
++};
++
++/* Since 1.29+git8 */
++struct ofono_cell_info_nr {
++	int mcc;            /* Mobile Country Code (0..999) */
++	int mnc;            /* Mobile Network Code (0..999) */
++	int64_t nci;        /* NR Cell Identity */
++	int pci;            /* Physical cell id (0..1007) */
++	int tac;            /* Tracking area code */
++	int nrarfcn;        /* 22-bit NR Absolute RC Channel Number */
++	int ssRsrp;         /* SS Reference Signal Receive Power TS 38.215 */
++	int ssRsrq;         /* SS Reference Signal Receive Quality TS 38.215 and 38.133 */
++	int ssSinr;         /* SS Reference Signal-to-Noise Ratio TS 38.215 and 38.133*/
++	int csiRsrp;        /* CSI Reference Signal Receive Power TS 38.215 */
++	int csiRsrq;        /* CSI Reference Signal Receive Quality TS 38.215 */
++	int csiSinr;        /* CSI Reference Signal-to-Noise Ratio TS 38.215 and 38.133 */
++};
++
++typedef struct ofono_cell {
++	enum ofono_cell_type type;
++	ofono_bool_t registered;
++	union {
++		struct ofono_cell_info_gsm gsm;
++		struct ofono_cell_info_wcdma wcdma;
++		struct ofono_cell_info_lte lte;
++		struct ofono_cell_info_nr nr; /* Since 1.29+git8 */
++	} info;
++} *ofono_cell_ptr;
++
++struct ofono_cell_info {
++	const struct ofono_cell_info_proc *proc;
++	const ofono_cell_ptr *cells; /* NULL-terminated */
++};
++
++typedef void (*ofono_cell_info_cb_t)(struct ofono_cell_info *ci, void *data);
++
++struct ofono_cell_info_proc {
++	void (*ref)(struct ofono_cell_info *ci);
++	void (*unref)(struct ofono_cell_info *ci);
++	unsigned long (*add_change_handler)(struct ofono_cell_info *ci,
++					ofono_cell_info_cb_t cb, void *data);
++	void (*remove_handler)(struct ofono_cell_info *ci, unsigned long id);
++	void (*set_update_interval)(struct ofono_cell_info *ci, int ms);
++	void (*set_enabled)(struct ofono_cell_info *ci, ofono_bool_t enabled);
++};
++
++/* Wrappers for ofono_cell_info objects */
++struct ofono_cell_info *ofono_cell_info_ref(struct ofono_cell_info *ci);
++void ofono_cell_info_unref(struct ofono_cell_info *ci);
++unsigned long ofono_cell_info_add_change_handler(struct ofono_cell_info *ci,
++					ofono_cell_info_cb_t cb, void *data);
++void ofono_cell_info_remove_handler(struct ofono_cell_info *ci,
++					unsigned long id);
++void ofono_cell_info_set_update_interval(struct ofono_cell_info *ci, int ms);
++void ofono_cell_info_set_enabled(struct ofono_cell_info *ci, ofono_bool_t on);
++int ofono_cell_compare_location(const struct ofono_cell *c1,
++					const struct ofono_cell *c2);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* OFONO_CELL_INFO_H */
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/include/dbus.h b/include/dbus.h
+index 984a9e9b..e89fa598 100644
+--- a/include/dbus.h
++++ b/include/dbus.h
+@@ -74,6 +74,8 @@ extern "C" {
+ 					DBUS_TYPE_VARIANT_AS_STRING \
+ 					DBUS_DICT_ENTRY_END_CHAR_AS_STRING
+ 
++#define OFONO_ERROR_INTERFACE "org.ofono.Error"
++
+ DBusConnection *ofono_dbus_get_connection(void);
+ 
+ void ofono_dbus_dict_append(DBusMessageIter *dict, const char *key, int type,
+diff --git a/include/types.h b/include/types.h
+index bf3a89ff..11950a91 100644
+--- a/include/types.h
++++ b/include/types.h
+@@ -36,6 +36,8 @@ extern "C" {
+ 
+ typedef int		ofono_bool_t;
+ 
++struct ofono_modem;
++
+ /* MCC is always three digits. MNC is either two or three digits */
+ #define OFONO_MAX_MCC_LENGTH 3
+ #define OFONO_MAX_MNC_LENGTH 3
+diff --git a/src/cell-info-control.c b/src/cell-info-control.c
+new file mode 100644
+index 00000000..99f9a593
+--- /dev/null
++++ b/src/cell-info-control.c
+@@ -0,0 +1,282 @@
++/*
++ *  oFono - Open Source Telephony - RIL-based devices
++ *
++ *  Copyright (C) 2021 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ */
++
++#include "cell-info-control.h"
++
++#include <ofono/cell-info.h>
++#include <ofono/log.h>
++
++#include <glib.h>
++
++#include <limits.h>
++
++typedef struct cell_info_control_object {
++	CellInfoControl pub;
++	int refcount;
++	char* path;
++	GHashTable *enabled;
++	GHashTable *set_interval;
++} CellInfoControlObject;
++
++static GHashTable *cell_info_control_table = NULL;
++
++static inline CellInfoControlObject *cell_info_control_object_cast
++	(CellInfoControl *ctl)
++{
++	return ctl ? G_STRUCT_MEMBER_P(ctl,
++		- G_STRUCT_OFFSET(CellInfoControlObject, pub)) : NULL;
++}
++
++static int cell_info_control_get_interval(CellInfoControlObject *self)
++{
++	int interval = INT_MAX;
++
++	if (self->set_interval) {
++		GHashTableIter it;
++		gpointer value;
++
++		g_hash_table_iter_init(&it, self->set_interval);
++		while (g_hash_table_iter_next(&it, NULL, &value)) {
++			/* All values are >=0 && < INT_MAX */
++			interval = MIN(interval, GPOINTER_TO_INT(value));
++		}
++	}
++	return interval;
++}
++
++static void cell_info_control_update_all(CellInfoControlObject *self)
++{
++	struct ofono_cell_info *cellinfo = self->pub.info;
++
++	if (cellinfo) {
++		if (self->enabled) {
++			ofono_cell_info_set_update_interval(cellinfo,
++				cell_info_control_get_interval(self));
++			ofono_cell_info_set_enabled(cellinfo, TRUE);
++		} else {
++			ofono_cell_info_set_enabled(cellinfo, FALSE);
++			ofono_cell_info_set_update_interval(cellinfo,
++				cell_info_control_get_interval(self));
++		}
++	}
++}
++
++static void cell_info_control_drop_all_requests_internal
++					(CellInfoControlObject *self)
++{
++	if (self->enabled) {
++		g_hash_table_destroy(self->enabled);
++		self->enabled = NULL;
++	}
++	if (self->set_interval) {
++		g_hash_table_destroy(self->set_interval);
++		self->set_interval = NULL;
++	}
++}
++
++static void cell_info_control_free(CellInfoControlObject *self)
++{
++	/* Destroy the table when the last instance is done */
++	g_hash_table_remove(cell_info_control_table, self->path);
++	if (g_hash_table_size(cell_info_control_table) == 0) {
++		g_hash_table_unref(cell_info_control_table);
++		cell_info_control_table = NULL;
++		DBG("%s gone", self->path);
++	}
++
++	cell_info_control_drop_all_requests_internal(self);
++	ofono_cell_info_unref(self->pub.info);
++	g_free(self->path);
++	g_free(self);
++}
++
++CellInfoControl *cell_info_control_get(const char* path)
++{
++	if (path) {
++		CellInfoControlObject *self = NULL;
++
++		if (cell_info_control_table) {
++			self = g_hash_table_lookup(cell_info_control_table,
++				path);
++		}
++		if (self) {
++			/* Already there */
++			return cell_info_control_ref(&self->pub);
++		} else {
++			/* Create a new one */
++			self = g_new0(CellInfoControlObject, 1);
++			self->pub.path = self->path = g_strdup(path);
++			self->refcount = 1;
++
++			/* Create the table if necessary */
++			if (!cell_info_control_table) {
++				cell_info_control_table =
++					g_hash_table_new(g_str_hash,
++						g_str_equal);
++			}
++			g_hash_table_insert(cell_info_control_table,
++				self->path, self);
++			DBG("%s created", path);
++			return &self->pub;
++		}
++	}
++	return NULL;
++}
++
++CellInfoControl *cell_info_control_ref(CellInfoControl *ctl)
++{
++	CellInfoControlObject *self = cell_info_control_object_cast(ctl);
++
++	if (self) {
++		self->refcount++;
++	}
++	return ctl;
++}
++
++void cell_info_control_unref(CellInfoControl *ctl)
++{
++	CellInfoControlObject *self = cell_info_control_object_cast(ctl);
++
++	if (self && !--self->refcount) {
++		cell_info_control_free(self);
++	}
++}
++
++void cell_info_control_set_cell_info(CellInfoControl *ctl,
++				struct ofono_cell_info *ci)
++{
++	CellInfoControlObject *self = cell_info_control_object_cast(ctl);
++
++	if (self && ctl->info != ci) {
++		ofono_cell_info_unref(ctl->info);
++		ctl->info = ofono_cell_info_ref(ci);
++		cell_info_control_update_all(self);
++	}
++}
++
++void cell_info_control_drop_all_requests(CellInfoControl *ctl)
++{
++	CellInfoControlObject *self = cell_info_control_object_cast(ctl);
++
++	if (self) {
++		cell_info_control_drop_all_requests_internal(self);
++		cell_info_control_update_all(self);
++	}
++}
++
++void cell_info_control_drop_requests(CellInfoControl *ctl, void *tag)
++{
++	CellInfoControlObject *self = cell_info_control_object_cast(ctl);
++
++	if (self && tag) {
++		if (self->enabled &&
++			g_hash_table_remove(self->enabled, tag) &&
++			!g_hash_table_size(self->enabled)) {
++			g_hash_table_unref(self->enabled);
++			self->enabled = NULL;
++			ofono_cell_info_set_enabled(ctl->info, FALSE);
++		}
++		if (self->set_interval &&
++			g_hash_table_remove(self->set_interval, tag)) {
++			int ms;
++
++			if (g_hash_table_size(self->set_interval)) {
++				ms = cell_info_control_get_interval(self);
++			} else {
++				g_hash_table_unref(self->set_interval);
++				self->set_interval = NULL;
++				ms = INT_MAX;
++			}
++			ofono_cell_info_set_update_interval(ctl->info, ms);
++		}
++	}
++}
++
++void cell_info_control_set_enabled(CellInfoControl *ctl,
++	void *tag, ofono_bool_t enabled)
++{
++	CellInfoControlObject *self = cell_info_control_object_cast(ctl);
++
++	if (self && tag) {
++		gboolean was_enabled = (self->enabled != NULL);
++		gboolean is_enabled;
++
++		if (enabled) {
++			if (!self->enabled) {
++				self->enabled = g_hash_table_new(g_direct_hash,
++					g_direct_equal);
++			}
++			g_hash_table_add(self->enabled, tag);
++		} else if (self->enabled) {
++			g_hash_table_remove(self->enabled, tag);
++			if (!g_hash_table_size(self->enabled)) {
++				g_hash_table_unref(self->enabled);
++				self->enabled = NULL;
++			}
++		}
++
++		is_enabled = (self->enabled != NULL);
++		if (is_enabled != was_enabled) {
++			ofono_cell_info_set_enabled(ctl->info, is_enabled);
++		}
++	}
++}
++
++void cell_info_control_set_update_interval(CellInfoControl *ctl,
++	void *tag, int ms)
++{
++	CellInfoControlObject *self = cell_info_control_object_cast(ctl);
++
++	if (self && tag) {
++		int old_interval = cell_info_control_get_interval(self);
++		int new_interval;
++
++		if (ms >= 0 && ms < INT_MAX) {
++			if (!self->set_interval) {
++				self->set_interval =
++					g_hash_table_new(g_direct_hash,
++						g_direct_equal);
++
++			}
++			g_hash_table_insert(self->set_interval, tag,
++				GINT_TO_POINTER(ms));
++		} else if (self->set_interval) {
++			g_hash_table_remove(self->set_interval, tag);
++			if (!g_hash_table_size(self->set_interval)) {
++				g_hash_table_unref(self->set_interval);
++				self->set_interval = NULL;
++			}
++		}
++
++		new_interval = cell_info_control_get_interval(self);
++		if (new_interval != old_interval) {
++			if (new_interval == INT_MAX) {
++				DBG("maximum");
++			} else {
++				DBG("%d ms", new_interval);
++			}
++			ofono_cell_info_set_update_interval(ctl->info,
++				new_interval);
++		}
++	}
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/src/cell-info-control.h b/src/cell-info-control.h
+new file mode 100644
+index 00000000..5b276ec8
+--- /dev/null
++++ b/src/cell-info-control.h
+@@ -0,0 +1,52 @@
++/*
++ *  oFono - Open Source Telephony - RIL-based devices
++ *
++ *  Copyright (C) 2021 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ *  GNU General Public License for more details.
++ */
++
++#ifndef CELL_INFO_CONTROL_H
++#define CELL_INFO_CONTROL_H
++
++#include <ofono/types.h>
++
++struct ofono_cell_info;
++
++typedef struct cell_info_control {
++	const char* path;
++	struct ofono_cell_info *info;
++} CellInfoControl;
++
++CellInfoControl *cell_info_control_get(const char* path);
++CellInfoControl *cell_info_control_ref(CellInfoControl *ctl);
++void cell_info_control_unref(CellInfoControl *ctl);
++void cell_info_control_set_cell_info(CellInfoControl *ctl,
++				struct ofono_cell_info *ci);
++void cell_info_control_drop_all_requests(CellInfoControl *ctl);
++void cell_info_control_drop_requests(CellInfoControl *ctl, void *tag);
++
++/* ofono_cell_info gets enabled if there's at least one request to enable it */
++void cell_info_control_set_enabled(CellInfoControl *ctl, void *tag,
++				ofono_bool_t enabled);
++
++/* the actual update interval will be the smallest of the requested */
++void cell_info_control_set_update_interval(CellInfoControl *ctl, void *tag,
++				int ms);
++
++#endif /* CELL_INFO_CONTROL_H */
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/src/cell-info-dbus.c b/src/cell-info-dbus.c
+new file mode 100644
+index 00000000..e167ee27
+--- /dev/null
++++ b/src/cell-info-dbus.c
+@@ -0,0 +1,731 @@
++/*
++ *  oFono - Open Source Telephony - RIL-based devices
++ *
++ *  Copyright (C) 2016-2021 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ *  GNU General Public License for more details.
++ */
++
++#include "cell-info-dbus.h"
++
++#include <ofono/cell-info.h>
++#include <ofono/modem.h>
++#include <ofono/dbus.h>
++#include <ofono/dbus-clients.h>
++#include <ofono/log.h>
++
++#include <gdbus.h>
++
++#include "ofono.h"
++
++typedef struct cell_entry {
++	guint cell_id;
++	char *path;
++	struct ofono_cell cell;
++} CellEntry;
++
++typedef struct cell_info_dbus {
++	struct ofono_cell_info *info;
++	CellInfoControl *ctl;
++	DBusConnection *conn;
++	char *path;
++	gulong handler_id;
++	guint next_cell_id;
++	GSList *entries;
++	struct ofono_dbus_clients *clients;
++} CellInfoDBus;
++
++#define CELL_INFO_DBUS_INTERFACE            "org.nemomobile.ofono.CellInfo"
++#define CELL_INFO_DBUS_CELLS_ADDED_SIGNAL   "CellsAdded"
++#define CELL_INFO_DBUS_CELLS_REMOVED_SIGNAL "CellsRemoved"
++#define CELL_INFO_DBUS_UNSUBSCRIBED_SIGNAL  "Unsubscribed"
++
++#define CELL_DBUS_INTERFACE_VERSION         (1)
++#define CELL_DBUS_INTERFACE                 "org.nemomobile.ofono.Cell"
++#define CELL_DBUS_REGISTERED_CHANGED_SIGNAL "RegisteredChanged"
++#define CELL_DBUS_PROPERTY_CHANGED_SIGNAL   "PropertyChanged"
++#define CELL_DBUS_REMOVED_SIGNAL            "Removed"
++
++struct cell_property {
++	const char *name;
++	glong off;
++	int flag;
++	int type;
++};
++
++#define CELL_GSM_PROPERTY(value,name) \
++	{ #name, G_STRUCT_OFFSET(struct ofono_cell_info_gsm,name), value, DBUS_TYPE_INT32 }
++#define CELL_WCDMA_PROPERTY(value,name) \
++	{ #name, G_STRUCT_OFFSET(struct ofono_cell_info_wcdma,name), value, DBUS_TYPE_INT32 }
++#define CELL_LTE_PROPERTY(value,name) \
++	{ #name, G_STRUCT_OFFSET(struct ofono_cell_info_lte,name), value, DBUS_TYPE_INT32 }
++#define CELL_NR_PROPERTY(value,name) \
++	{ #name, G_STRUCT_OFFSET(struct ofono_cell_info_nr,name), value, DBUS_TYPE_INT32 }
++#define CELL_NR_PROPERTY64(value,name) \
++	{ #name, G_STRUCT_OFFSET(struct ofono_cell_info_nr,name), value, DBUS_TYPE_INT64 }
++
++static const struct cell_property cell_gsm_properties [] = {
++	CELL_GSM_PROPERTY(0x001,mcc),
++	CELL_GSM_PROPERTY(0x002,mnc),
++	CELL_GSM_PROPERTY(0x004,lac),
++	CELL_GSM_PROPERTY(0x008,cid),
++	CELL_GSM_PROPERTY(0x010,arfcn),
++	CELL_GSM_PROPERTY(0x020,bsic),
++	CELL_GSM_PROPERTY(0x040,signalStrength),
++	CELL_GSM_PROPERTY(0x080,bitErrorRate),
++	CELL_GSM_PROPERTY(0x100,timingAdvance)
++};
++
++static const struct cell_property cell_wcdma_properties [] = {
++	CELL_WCDMA_PROPERTY(0x01,mcc),
++	CELL_WCDMA_PROPERTY(0x02,mnc),
++	CELL_WCDMA_PROPERTY(0x04,lac),
++	CELL_WCDMA_PROPERTY(0x08,cid),
++	CELL_WCDMA_PROPERTY(0x10,psc),
++	CELL_WCDMA_PROPERTY(0x20,uarfcn),
++	CELL_WCDMA_PROPERTY(0x40,signalStrength),
++	CELL_WCDMA_PROPERTY(0x80,bitErrorRate)
++};
++
++static const struct cell_property cell_lte_properties [] = {
++	CELL_LTE_PROPERTY(0x001,mcc),
++	CELL_LTE_PROPERTY(0x002,mnc),
++	CELL_LTE_PROPERTY(0x004,ci),
++	CELL_LTE_PROPERTY(0x008,pci),
++	CELL_LTE_PROPERTY(0x010,tac),
++	CELL_LTE_PROPERTY(0x020,earfcn),
++	CELL_LTE_PROPERTY(0x040,signalStrength),
++	CELL_LTE_PROPERTY(0x080,rsrp),
++	CELL_LTE_PROPERTY(0x100,rsrq),
++	CELL_LTE_PROPERTY(0x200,rssnr),
++	CELL_LTE_PROPERTY(0x400,cqi),
++	CELL_LTE_PROPERTY(0x800,timingAdvance)
++};
++
++static const struct cell_property cell_nr_properties [] = {
++	CELL_NR_PROPERTY(0x001,mcc),
++	CELL_NR_PROPERTY(0x002,mnc),
++	CELL_NR_PROPERTY64(0x004,nci),
++	CELL_NR_PROPERTY(0x008,pci),
++	CELL_NR_PROPERTY(0x010,tac),
++	CELL_NR_PROPERTY(0x020,nrarfcn),
++	CELL_NR_PROPERTY(0x040,ssRsrp),
++	CELL_NR_PROPERTY(0x080,ssRsrq),
++	CELL_NR_PROPERTY(0x100,ssSinr),
++	CELL_NR_PROPERTY(0x200,csiRsrp),
++	CELL_NR_PROPERTY(0x400,csiRsrq),
++	CELL_NR_PROPERTY(0x800,csiSinr),
++};
++
++#define CELL_PROPERTY_REGISTERED 0x1000
++
++typedef void (*cell_info_dbus_append_fn)(DBusMessageIter *it,
++	const CellEntry *entry);
++
++static void cell_info_dbus_set_updates_enabled(CellInfoDBus *dbus, gboolean on)
++{
++	cell_info_control_set_enabled(dbus->ctl, dbus, on);
++	cell_info_control_set_update_interval(dbus->ctl, dbus, on ? 5000 : -1);
++}
++
++static const char *cell_info_dbus_cell_type_str(enum ofono_cell_type type)
++{
++	switch (type) {
++	case OFONO_CELL_TYPE_GSM:
++		return "gsm";
++	case OFONO_CELL_TYPE_WCDMA:
++		return "wcdma";
++	case OFONO_CELL_TYPE_LTE:
++		return "lte";
++	case OFONO_CELL_TYPE_NR:
++		return "nr";
++	default:
++		return "unknown";
++	}
++};
++
++static const struct cell_property *cell_info_dbus_cell_properties
++	(enum ofono_cell_type type, int *count)
++{
++	switch (type) {
++	case OFONO_CELL_TYPE_GSM:
++		*count = G_N_ELEMENTS(cell_gsm_properties);
++		return cell_gsm_properties;
++	case OFONO_CELL_TYPE_WCDMA:
++		*count = G_N_ELEMENTS(cell_wcdma_properties);
++		return cell_wcdma_properties;
++	case OFONO_CELL_TYPE_LTE:
++		*count = G_N_ELEMENTS(cell_lte_properties);
++		return cell_lte_properties;
++	case OFONO_CELL_TYPE_NR:
++		*count = G_N_ELEMENTS(cell_nr_properties);
++		return cell_nr_properties;
++	default:
++		*count = 0;
++		return NULL;
++	}
++};
++
++static void cell_info_destroy_entry(CellEntry *entry)
++{
++	if (entry) {
++		g_free(entry->path);
++		g_free(entry);
++	}
++}
++
++static DBusMessage *cell_info_dbus_reply(DBusMessage *msg,
++	const CellEntry *entry, cell_info_dbus_append_fn append)
++{
++	DBusMessage *reply = dbus_message_new_method_return(msg);
++	DBusMessageIter it;
++
++	dbus_message_iter_init_append(reply, &it);
++	append(&it, entry);
++	return reply;
++}
++
++static void cell_info_dbus_append_version(DBusMessageIter *it,
++	const CellEntry *entry)
++{
++	dbus_int32_t version = CELL_DBUS_INTERFACE_VERSION;
++
++	dbus_message_iter_append_basic(it, DBUS_TYPE_INT32, &version);
++}
++
++static void cell_info_dbus_append_type(DBusMessageIter *it,
++	const CellEntry *entry)
++{
++	const char *type = cell_info_dbus_cell_type_str(entry->cell.type);
++
++	dbus_message_iter_append_basic(it, DBUS_TYPE_STRING, &type);
++}
++
++static void cell_info_dbus_append_registered(DBusMessageIter *it,
++	const CellEntry *entry)
++{
++	const dbus_bool_t registered = (entry->cell.registered != FALSE);
++
++	dbus_message_iter_append_basic(it, DBUS_TYPE_BOOLEAN, &registered);
++}
++
++static void cell_info_dbus_append_properties(DBusMessageIter *it,
++	const CellEntry *entry)
++{
++	int i, n;
++	DBusMessageIter dict;
++	const struct ofono_cell *cell = &entry->cell;
++	const struct cell_property *prop =
++		cell_info_dbus_cell_properties(cell->type, &n);
++
++	dbus_message_iter_open_container(it, DBUS_TYPE_ARRAY, "{sv}", &dict);
++	for (i = 0; i < n; i++) {
++		if (prop[i].type == DBUS_TYPE_INT64) {
++			gint64 value = G_STRUCT_MEMBER(gint64, &cell->info, prop[i].off);
++			if (value != OFONO_CELL_INVALID_VALUE_INT64) {
++				ofono_dbus_dict_append(&dict, prop[i].name,
++					DBUS_TYPE_INT64, &value);
++			}
++		} else {
++			gint32 value = G_STRUCT_MEMBER(int, &cell->info, prop[i].off);
++			if (value != OFONO_CELL_INVALID_VALUE) {
++				ofono_dbus_dict_append(&dict, prop[i].name,
++					DBUS_TYPE_INT32, &value);
++			}
++		}
++	}
++	dbus_message_iter_close_container(it, &dict);
++}
++
++static void cell_info_dbus_append_all(DBusMessageIter *it, const CellEntry *ce)
++{
++	cell_info_dbus_append_version(it, ce);
++	cell_info_dbus_append_type(it, ce);
++	cell_info_dbus_append_registered(it, ce);
++	cell_info_dbus_append_properties(it, ce);
++}
++
++static DBusMessage *cell_info_dbus_cell_get_all(DBusConnection *conn,
++	DBusMessage *msg, void *data)
++{
++	return cell_info_dbus_reply(msg, (CellEntry*) data,
++		cell_info_dbus_append_all);
++}
++
++static DBusMessage *cell_info_dbus_cell_get_version(DBusConnection *conn,
++	DBusMessage *msg, void *data)
++{
++	return cell_info_dbus_reply(msg, (CellEntry*) data,
++		cell_info_dbus_append_version);
++}
++
++static DBusMessage *cell_info_dbus_cell_get_type(DBusConnection *conn,
++	DBusMessage *msg, void *data)
++{
++	return cell_info_dbus_reply(msg, (CellEntry*) data,
++		cell_info_dbus_append_type);
++}
++
++static DBusMessage *cell_info_dbus_cell_get_registered(DBusConnection *conn,
++	DBusMessage *msg, void *data)
++{
++	return cell_info_dbus_reply(msg, (CellEntry*) data,
++		cell_info_dbus_append_registered);
++}
++
++static DBusMessage *cell_info_dbus_cell_get_properties(DBusConnection *conn,
++	DBusMessage *msg, void *data)
++{
++	return cell_info_dbus_reply(msg, (CellEntry*) data,
++		cell_info_dbus_append_properties);
++}
++
++static const GDBusMethodTable cell_info_dbus_cell_methods[] = {
++	{ GDBUS_METHOD("GetAll", NULL,
++			GDBUS_ARGS({ "version", "i" },
++			           { "type", "s" },
++			           { "registered", "b" },
++			           { "properties", "a{sv}" }),
++			cell_info_dbus_cell_get_all) },
++	{ GDBUS_METHOD("GetInterfaceVersion", NULL,
++			GDBUS_ARGS({ "version", "i" }),
++			cell_info_dbus_cell_get_version) },
++	{ GDBUS_METHOD("GetType", NULL,
++			GDBUS_ARGS({ "type", "s" }),
++			cell_info_dbus_cell_get_type) },
++	{ GDBUS_METHOD("GetRegistered", NULL,
++			GDBUS_ARGS({ "registered", "b" }),
++			cell_info_dbus_cell_get_registered) },
++	{ GDBUS_METHOD("GetProperties", NULL,
++			GDBUS_ARGS({ "properties", "a{sv}" }),
++			cell_info_dbus_cell_get_properties) },
++	{ }
++};
++
++static const GDBusSignalTable cell_info_dbus_cell_signals[] = {
++	{ GDBUS_SIGNAL(CELL_DBUS_REGISTERED_CHANGED_SIGNAL,
++			GDBUS_ARGS({ "registered", "b" })) },
++	{ GDBUS_SIGNAL(CELL_DBUS_PROPERTY_CHANGED_SIGNAL,
++			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
++	{ GDBUS_SIGNAL(CELL_DBUS_REMOVED_SIGNAL,
++			GDBUS_ARGS({})) },
++	{ }
++};
++
++static CellEntry *cell_info_dbus_find_id(CellInfoDBus *dbus, guint id)
++{
++	GSList *l;
++
++	for (l = dbus->entries; l; l = l->next) {
++		CellEntry *entry = l->data;
++
++		if (entry->cell_id == id) {
++			return entry;
++		}
++	}
++	return NULL;
++}
++
++static guint cell_info_dbus_next_cell_id(CellInfoDBus *dbus)
++{
++	while (cell_info_dbus_find_id(dbus, dbus->next_cell_id)) {
++		dbus->next_cell_id++;
++	}
++	return dbus->next_cell_id++;
++}
++
++static const struct ofono_cell *cell_info_dbus_find_ofono_cell
++	(struct ofono_cell_info *info, const struct ofono_cell *cell)
++{
++	const ofono_cell_ptr *c;
++
++	for (c = info->cells; *c; c++) {
++		if (!ofono_cell_compare_location(*c, cell)) {
++			return *c;
++		}
++	}
++	return NULL;
++}
++
++static CellEntry *cell_info_dbus_find_cell(CellInfoDBus *dbus,
++	const struct ofono_cell *cell)
++{
++	if (cell) {
++		GSList *l;
++
++		for (l = dbus->entries; l; l = l->next) {
++			CellEntry *e = l->data;
++
++			if (!ofono_cell_compare_location(&e->cell, cell)) {
++				return e;
++			}
++		}
++	}
++	return NULL;
++}
++
++static void cell_info_dbus_emit_path_list(CellInfoDBus *dbus, const char *name,
++	GPtrArray *list)
++{
++	if (ofono_dbus_clients_count(dbus->clients)) {
++		guint i;
++		DBusMessageIter it, a;
++		DBusMessage *signal = dbus_message_new_signal(dbus->path,
++			CELL_INFO_DBUS_INTERFACE, name);
++
++		dbus_message_iter_init_append(signal, &it);
++		dbus_message_iter_open_container(&it, DBUS_TYPE_ARRAY, "o", &a);
++		for (i = 0; i < list->len; i++) {
++			const char* path = list->pdata[i];
++
++			dbus_message_iter_append_basic(&a,
++				DBUS_TYPE_OBJECT_PATH, &path);
++		}
++		dbus_message_iter_close_container(&it, &a);
++		ofono_dbus_clients_signal(dbus->clients, signal);
++		dbus_message_unref(signal);
++	}
++}
++
++static int cell_info_dbus_compare(const struct ofono_cell *c1,
++	const struct ofono_cell *c2)
++{
++	if (c1->type == c2->type) {
++		int i, n, mask = 0;
++		const struct cell_property *prop =
++			cell_info_dbus_cell_properties(c1->type, &n);
++
++		if (c1->registered != c2->registered) {
++			mask |= CELL_PROPERTY_REGISTERED;
++		}
++
++		for (i = 0; i < n; i++) {
++			const glong offset = prop[i].off;
++			if (prop[i].type == DBUS_TYPE_INT64) {
++				gint64 v1 = G_STRUCT_MEMBER(gint64, &c1->info, offset);
++				gint64 v2 = G_STRUCT_MEMBER(gint64, &c2->info, offset);
++
++				if (v1 != v2) {
++					mask |= prop[i].flag;
++				}
++			} else  {
++				gint32 v1 = G_STRUCT_MEMBER(int, &c1->info, offset);
++				gint32 v2 = G_STRUCT_MEMBER(int, &c2->info, offset);
++
++				if (v1 != v2) {
++					mask |= prop[i].flag;
++				}
++			}
++		}
++
++		return mask;
++	} else {
++		return -1;
++	}
++}
++
++static void cell_info_dbus_emit_signal(CellInfoDBus *dbus, const char *path,
++	const char *intf, const char *name, int type, ...)
++{
++	if (ofono_dbus_clients_count(dbus->clients)) {
++		va_list args;
++		DBusMessage *signal = dbus_message_new_signal(path, intf, name);
++
++		va_start(args, type);
++		dbus_message_append_args_valist(signal, type, args);
++		ofono_dbus_clients_signal(dbus->clients, signal);
++		dbus_message_unref(signal);
++		va_end(args);
++	}
++}
++
++static void cell_info_dbus_property_changed(CellInfoDBus *dbus,
++	const CellEntry *entry, int mask)
++{
++	int i, n;
++	const struct ofono_cell *cell = &entry->cell;
++	const struct cell_property *prop =
++		cell_info_dbus_cell_properties(cell->type, &n);
++
++	if (mask & CELL_PROPERTY_REGISTERED) {
++		const dbus_bool_t registered = (cell->registered != FALSE);
++
++		cell_info_dbus_emit_signal(dbus, entry->path,
++			CELL_DBUS_INTERFACE,
++			CELL_DBUS_REGISTERED_CHANGED_SIGNAL,
++			DBUS_TYPE_BOOLEAN, &registered, DBUS_TYPE_INVALID);
++		mask &= ~CELL_PROPERTY_REGISTERED;
++	}
++
++	for (i = 0; i < n && mask; i++) {
++		if (mask & prop[i].flag) {
++			ofono_dbus_clients_signal_property_changed(
++				dbus->clients, entry->path,
++				CELL_DBUS_INTERFACE, prop[i].name,
++				prop[i].type,
++				G_STRUCT_MEMBER_P(&cell->info, prop[i].off));
++			mask &= ~prop[i].flag;
++		}
++	}
++}
++
++static void cell_info_dbus_update_entries(CellInfoDBus *dbus, gboolean emit)
++{
++	GSList *l;
++	GPtrArray* added = NULL;
++	GPtrArray* removed = NULL;
++	const ofono_cell_ptr *c;
++
++	/* Remove non-existent cells */
++	l = dbus->entries;
++	while (l) {
++		GSList *next = l->next;
++		CellEntry *entry = l->data;
++
++		if (!cell_info_dbus_find_ofono_cell(dbus->info, &entry->cell)) {
++			DBG("%s removed", entry->path);
++			dbus->entries = g_slist_delete_link(dbus->entries, l);
++			cell_info_dbus_emit_signal(dbus, entry->path,
++				CELL_DBUS_INTERFACE,
++				CELL_DBUS_REMOVED_SIGNAL,
++				DBUS_TYPE_INVALID);
++			g_dbus_unregister_interface(dbus->conn, entry->path,
++				CELL_DBUS_INTERFACE);
++			if (emit) {
++				if (!removed) {
++					removed = g_ptr_array_new_with_free_func
++						(g_free);
++				}
++				/* Steal the path */
++				g_ptr_array_add(removed, entry->path);
++				entry->path = NULL;
++			}
++			cell_info_destroy_entry(entry);
++		}
++		l = next;
++	}
++
++	/* Add new cells */
++	for (c = dbus->info->cells; *c; c++) {
++		const struct ofono_cell *cell = *c;
++		CellEntry *entry = cell_info_dbus_find_cell(dbus, cell);
++
++		if (entry) {
++			if (emit) {
++				const int diff = cell_info_dbus_compare(cell,
++					&entry->cell);
++
++				entry->cell = *cell;
++				cell_info_dbus_property_changed(dbus, entry,
++					diff);
++			} else {
++				entry->cell = *cell;
++			}
++		} else {
++			entry = g_new0(CellEntry, 1);
++			entry->cell = *cell;
++			entry->cell_id = cell_info_dbus_next_cell_id(dbus);
++			entry->path = g_strdup_printf("%s/cell_%u", dbus->path,
++				entry->cell_id);
++			dbus->entries = g_slist_append(dbus->entries, entry);
++			DBG("%s added", entry->path);
++			g_dbus_register_interface(dbus->conn, entry->path,
++				CELL_DBUS_INTERFACE,
++				cell_info_dbus_cell_methods,
++				cell_info_dbus_cell_signals, NULL,
++				entry, NULL);
++			if (emit) {
++				if (!added) {
++					added = g_ptr_array_new();
++				}
++				g_ptr_array_add(added, entry->path);
++			}
++		}
++	}
++
++	if (removed) {
++		cell_info_dbus_emit_path_list(dbus,
++			CELL_INFO_DBUS_CELLS_REMOVED_SIGNAL, removed);
++		g_ptr_array_free(removed, TRUE);
++	}
++
++	if (added) {
++		cell_info_dbus_emit_path_list(dbus,
++			CELL_INFO_DBUS_CELLS_ADDED_SIGNAL, added);
++		g_ptr_array_free(added, TRUE);
++	}
++}
++
++static void cell_info_dbus_cells_changed_cb(struct ofono_cell_info *info,
++	void *data)
++{
++	DBG("");
++	cell_info_dbus_update_entries((CellInfoDBus *) data, TRUE);
++}
++
++static DBusMessage *cell_info_dbus_error_failed(DBusMessage *msg,
++	const char *explanation)
++{
++	return g_dbus_create_error(msg, OFONO_ERROR_INTERFACE ".Failed", "%s",
++								explanation);
++}
++
++static DBusMessage *cell_info_dbus_get_cells(DBusConnection *conn,
++	DBusMessage *msg, void *data)
++{
++	CellInfoDBus *dbus = data;
++	const char *sender = dbus_message_get_sender(msg);
++
++	if (ofono_dbus_clients_add(dbus->clients, sender)) {
++		DBusMessage *reply = dbus_message_new_method_return(msg);
++		DBusMessageIter it, a;
++		GSList *l;
++
++		cell_info_dbus_set_updates_enabled(dbus, TRUE);
++		dbus_message_iter_init_append(reply, &it);
++		dbus_message_iter_open_container(&it, DBUS_TYPE_ARRAY, "o", &a);
++		for (l = dbus->entries; l; l = l->next) {
++			const CellEntry *entry = l->data;
++
++			dbus_message_iter_append_basic(&a,
++					DBUS_TYPE_OBJECT_PATH, &entry->path);
++		}
++		dbus_message_iter_close_container(&it, &a);
++		return reply;
++	}
++	return cell_info_dbus_error_failed(msg, "Operation failed");
++}
++
++static DBusMessage *cell_info_dbus_unsubscribe(DBusConnection *conn,
++	DBusMessage *msg, void *data)
++{
++	CellInfoDBus *dbus = data;
++	const char *sender = dbus_message_get_sender(msg);
++
++	DBG("%s", sender);
++	if (ofono_dbus_clients_remove(dbus->clients, sender)) {
++		DBusMessage *signal = dbus_message_new_signal(dbus->path,
++			CELL_INFO_DBUS_INTERFACE,
++			CELL_INFO_DBUS_UNSUBSCRIBED_SIGNAL);
++
++		if (!ofono_dbus_clients_count(dbus->clients)) {
++			cell_info_dbus_set_updates_enabled(dbus, FALSE);
++		}
++		dbus_message_set_destination(signal, sender);
++		g_dbus_send_message(dbus->conn, signal);
++		return dbus_message_new_method_return(msg);
++	}
++	return cell_info_dbus_error_failed(msg, "Not subscribed");
++}
++
++static const GDBusMethodTable cell_info_dbus_methods[] = {
++	{ GDBUS_METHOD("GetCells", NULL,
++			GDBUS_ARGS({ "paths", "ao" }),
++			cell_info_dbus_get_cells) },
++	{ GDBUS_METHOD("Unsubscribe", NULL, NULL,
++			cell_info_dbus_unsubscribe) },
++	{ }
++};
++
++static const GDBusSignalTable cell_info_dbus_signals[] = {
++	{ GDBUS_SIGNAL(CELL_INFO_DBUS_CELLS_ADDED_SIGNAL,
++			GDBUS_ARGS({ "paths", "ao" })) },
++	{ GDBUS_SIGNAL(CELL_INFO_DBUS_CELLS_REMOVED_SIGNAL,
++			GDBUS_ARGS({ "paths", "ao" })) },
++	{ GDBUS_SIGNAL(CELL_INFO_DBUS_UNSUBSCRIBED_SIGNAL,
++			GDBUS_ARGS({})) },
++	{ }
++};
++
++static void cell_info_dbus_disconnect_cb(const char *name, void *data)
++{
++	CellInfoDBus *dbus = data;
++
++	if (!ofono_dbus_clients_count(dbus->clients)) {
++		cell_info_dbus_set_updates_enabled(dbus, FALSE);
++	}
++}
++
++CellInfoDBus *cell_info_dbus_new(struct ofono_modem *modem,
++	CellInfoControl *ctl)
++{
++	if (modem && ctl && ctl->info) {
++		struct ofono_cell_info *info = ctl->info;
++		CellInfoDBus *dbus = g_new0(CellInfoDBus, 1);
++
++		DBG("%s", ofono_modem_get_path(modem));
++		dbus->path = g_strdup(ofono_modem_get_path(modem));
++		dbus->conn = dbus_connection_ref(ofono_dbus_get_connection());
++		dbus->info = ofono_cell_info_ref(info);
++		dbus->ctl = cell_info_control_ref(ctl);
++		dbus->handler_id = ofono_cell_info_add_change_handler(info,
++			cell_info_dbus_cells_changed_cb, dbus);
++
++		/* Register D-Bus interface */
++		if (g_dbus_register_interface(dbus->conn, dbus->path,
++			CELL_INFO_DBUS_INTERFACE,
++			cell_info_dbus_methods,
++			cell_info_dbus_signals,
++			NULL, dbus, NULL)) {
++			ofono_modem_add_interface(modem,
++				CELL_INFO_DBUS_INTERFACE);
++			cell_info_dbus_update_entries(dbus, FALSE);
++			dbus->clients = ofono_dbus_clients_new(dbus->conn,
++				cell_info_dbus_disconnect_cb, dbus);
++			return dbus;
++		} else {
++			ofono_error("CellInfo D-Bus register failed");
++			cell_info_dbus_free(dbus);
++		}
++	}
++	return NULL;
++}
++
++void cell_info_dbus_free(CellInfoDBus *dbus)
++{
++	if (dbus) {
++		GSList *l;
++
++		DBG("%s", dbus->path);
++		ofono_dbus_clients_free(dbus->clients);
++		g_dbus_unregister_interface(dbus->conn, dbus->path,
++			CELL_INFO_DBUS_INTERFACE);
++
++		/* Unregister cells */
++		l = dbus->entries;
++		while (l) {
++			CellEntry *entry = l->data;
++			g_dbus_unregister_interface(dbus->conn, entry->path,
++				CELL_DBUS_INTERFACE);
++			cell_info_destroy_entry(entry);
++			l = l->next;
++		}
++		g_slist_free(dbus->entries);
++
++		dbus_connection_unref(dbus->conn);
++
++		ofono_cell_info_remove_handler(dbus->info, dbus->handler_id);
++		ofono_cell_info_unref(dbus->info);
++
++		cell_info_control_drop_requests(dbus->ctl, dbus);
++		cell_info_control_unref(dbus->ctl);
++
++		g_free(dbus->path);
++		g_free(dbus);
++	}
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/src/cell-info-dbus.h b/src/cell-info-dbus.h
+new file mode 100644
+index 00000000..f1ce5028
+--- /dev/null
++++ b/src/cell-info-dbus.h
+@@ -0,0 +1,35 @@
++/*
++ *  oFono - Open Source Telephony - RIL-based devices
++ *
++ *  Copyright (C) 2016-2021 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ */
++
++#ifndef CELL_INFO_DBUS_H
++#define CELL_INFO_DBUS_H
++
++#include "cell-info-control.h"
++
++struct cell_info_dbus;
++
++struct cell_info_dbus *cell_info_dbus_new(struct ofono_modem *modem,
++					CellInfoControl *ctl);
++void cell_info_dbus_free(struct cell_info_dbus *dbus);
++
++#endif /* CELL_INFO_DBUS_H */
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/src/cell-info.c b/src/cell-info.c
+new file mode 100644
+index 00000000..6468b0c7
+--- /dev/null
++++ b/src/cell-info.c
+@@ -0,0 +1,154 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2017-2021 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ */
++
++#include "ofono.h"
++
++int ofono_cell_compare_location(const struct ofono_cell *c1,
++	const struct ofono_cell *c2)
++{
++	if (c1 && c2) {
++		if (c1->type != c2->type) {
++			return c1->type - c2->type;
++		} else if (c1->type == OFONO_CELL_TYPE_GSM) {
++			const struct ofono_cell_info_gsm *g1;
++			const struct ofono_cell_info_gsm *g2;
++
++			g1 = &c1->info.gsm;
++			g2 = &c2->info.gsm;
++			if (g1->mcc != g2->mcc) {
++				return g1->mcc - g2->mcc;
++			} else if (g1->mnc != g2->mnc) {
++				return g1->mnc - g2->mnc;
++			} else if (g1->lac != g2->lac) {
++				return g1->lac - g2->lac;
++			} else {
++				return g1->cid - g2->cid;
++			}
++		} else if (c1->type == OFONO_CELL_TYPE_WCDMA) {
++			const struct ofono_cell_info_wcdma *w1;
++			const struct ofono_cell_info_wcdma *w2;
++
++			w1 = &c1->info.wcdma;
++			w2 = &c2->info.wcdma;
++			if (w1->mcc != w2->mcc) {
++				return w1->mcc - w2->mcc;
++			} else if (w1->mnc != w2->mnc) {
++				return w1->mnc - w2->mnc;
++			} else if (w1->lac != w2->lac) {
++				return w1->lac - w2->lac;
++			} else {
++				return w1->cid - w2->cid;
++			}
++		} else if (c1->type == OFONO_CELL_TYPE_LTE) {
++			const struct ofono_cell_info_lte *l1 =
++				&c1->info.lte;
++			const struct ofono_cell_info_lte *l2 =
++				&c2->info.lte;
++
++			l1 = &c1->info.lte;
++			l2 = &c2->info.lte;
++			if (l1->mcc != l2->mcc) {
++				return l1->mcc - l2->mcc;
++			} else if (l1->mnc != l2->mnc) {
++				return l1->mnc - l2->mnc;
++			} else if (l1->ci != l2->ci) {
++				return l1->ci - l2->ci;
++			} else if (l1->pci != l2->pci) {
++				return l1->pci - l2->pci;
++			} else {
++				return l1->tac - l2->tac;
++			}
++		} else if (c1->type == OFONO_CELL_TYPE_NR) {
++			const struct ofono_cell_info_nr *n1 =
++				&c1->info.nr;
++			const struct ofono_cell_info_nr *n2 =
++				&c2->info.nr;
++
++			if (n1->mcc != n2->mcc) {
++				return n1->mcc - n2->mcc;
++			} else if (n1->mnc != n2->mnc) {
++				return n1->mnc - n2->mnc;
++			} else if (n1->nci != n2->nci) {
++				return n1->nci - n2->nci;
++			} else if (n1->pci != n2->pci) {
++				return n1->pci - n2->pci;
++			} else {
++				return n1->tac - n2->tac;
++			}
++		} else {
++			ofono_warn("Unexpected cell type");
++			return 0;
++		}
++	} else if (c1) {
++		return 1;
++	} else if (c2) {
++		return -1;
++	} else {
++		return 0;
++	}
++}
++
++struct ofono_cell_info *ofono_cell_info_ref(struct ofono_cell_info *ci)
++{
++	if (ci && ci->proc->ref) {
++		ci->proc->ref(ci);
++	}
++	return ci;
++}
++
++void ofono_cell_info_unref(struct ofono_cell_info *ci)
++{
++	if (ci && ci->proc->unref) {
++		ci->proc->unref(ci);
++	}
++}
++
++unsigned long ofono_cell_info_add_change_handler(struct ofono_cell_info *ci,
++	ofono_cell_info_cb_t cb, void *data)
++{
++	return (ci && ci->proc->add_change_handler && cb) ?
++		ci->proc->add_change_handler(ci, cb, data) : 0;
++}
++
++void ofono_cell_info_remove_handler(struct ofono_cell_info *ci,
++	unsigned long id)
++{
++	if (ci && ci->proc->remove_handler && id) {
++		ci->proc->remove_handler(ci, id);
++	}
++}
++
++void ofono_cell_info_set_update_interval(struct ofono_cell_info *ci, int ms)
++{
++	if (ci && ci->proc->set_update_interval) {
++		ci->proc->set_update_interval(ci, ms);
++	}
++}
++
++void ofono_cell_info_set_enabled(struct ofono_cell_info *ci,
++	ofono_bool_t enabled)
++{
++	if (ci && ci->proc->set_enabled) {
++		ci->proc->set_enabled(ci, enabled);
++	}
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/src/ofono.h b/src/ofono.h
+index ff7fc11a..f7e01e00 100644
+--- a/src/ofono.h
++++ b/src/ofono.h
+@@ -614,6 +614,7 @@ void __ofono_private_network_release(int id);
+ ofono_bool_t __ofono_private_network_request(ofono_private_network_cb_t cb,
+ 						int *id, void *data);
+ 
++#include <ofono/cell-info.h>
+ #include <ofono/dbus-access.h>
+ #include <ofono/netmon.h>
+ #include <ofono/lte.h>
+diff --git a/unit/fake_cell_info.c b/unit/fake_cell_info.c
+new file mode 100644
+index 00000000..faac5c0c
+--- /dev/null
++++ b/unit/fake_cell_info.c
+@@ -0,0 +1,230 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2017-2021 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ *  GNU General Public License for more details.
++ */
++
++#include "fake_cell_info.h"
++
++#include <ofono/log.h>
++
++#include <gutil_macros.h>
++#include <gutil_misc.h>
++
++#include <glib-object.h>
++
++typedef GObjectClass FakeCellInfoClass;
++typedef struct fake_cell_info {
++	GObject object;
++	struct ofono_cell_info info;
++	struct ofono_cell **cells;
++	int interval;
++	gboolean enabled;
++} FakeCellInfo;
++
++typedef struct fake_cell_info_signal_data {
++	ofono_cell_info_cb_t cb;
++	void *arg;
++} FakeCellInfoSignalData;
++
++enum fake_cell_info_signal {
++	SIGNAL_CHANGED,
++	SIGNAL_COUNT
++};
++
++static guint fake_cell_info_signals[SIGNAL_COUNT] = { 0 };
++
++#define THIS(obj) G_TYPE_CHECK_INSTANCE_CAST((obj), THIS_TYPE, FakeCellInfo)
++#define THIS_TYPE fake_cell_info_get_type()
++#define PARENT_TYPE G_TYPE_OBJECT
++#define PARENT_CLASS fake_cell_info_parent_class
++
++G_DEFINE_TYPE(FakeCellInfo, fake_cell_info, PARENT_TYPE)
++
++#define SIGNAL_CHANGED_NAME  "fake-cell-info-changed"
++
++static FakeCellInfo *fake_cell_info_cast(struct ofono_cell_info *info)
++{
++	g_assert(info);
++	return G_CAST(info, FakeCellInfo, info);
++}
++
++static void fake_cell_info_ref_proc(struct ofono_cell_info *info)
++{
++	g_object_ref(fake_cell_info_cast(info));
++}
++
++static void fake_cell_info_unref_proc(struct ofono_cell_info *info)
++{
++	g_object_unref(fake_cell_info_cast(info));
++}
++
++static void fake_cell_info_change_cb(FakeCellInfo *self, void *data)
++{
++	FakeCellInfoSignalData *signal_data = data;
++
++	signal_data->cb(&self->info, signal_data->arg);
++}
++
++static void fake_cell_info_change_free(gpointer data, GClosure *closure)
++{
++	g_free(data);
++}
++
++static gulong fake_cell_info_add_change_handler_proc
++				(struct ofono_cell_info *info,
++					ofono_cell_info_cb_t cb, void *arg)
++{
++	if (cb) {
++		FakeCellInfoSignalData *data =
++			g_new0(FakeCellInfoSignalData, 1);
++
++		data->cb = cb;
++		data->arg = arg;
++		return g_signal_connect_data(fake_cell_info_cast(info),
++				SIGNAL_CHANGED_NAME,
++				G_CALLBACK(fake_cell_info_change_cb),
++				data, fake_cell_info_change_free,
++				G_CONNECT_AFTER);
++	} else {
++		return 0;
++	}
++}
++
++static void fake_cell_info_remove_handler_proc(struct ofono_cell_info *info,
++								gulong id)
++{
++	if (id) {
++		g_signal_handler_disconnect(fake_cell_info_cast(info), id);
++	}
++}
++
++static void fake_cell_info_set_update_interval(struct ofono_cell_info *info,
++	int ms)
++{
++	DBG("%d", ms);
++	fake_cell_info_cast(info)->interval = ms;
++}
++
++static void fake_cell_info_set_enabled(struct ofono_cell_info *info,
++	ofono_bool_t enabled)
++{
++	DBG("%d", enabled);
++	fake_cell_info_cast(info)->enabled = enabled;
++}
++
++static void fake_cell_info_init(FakeCellInfo *self)
++{
++	self->info.cells = self->cells = g_new0(struct ofono_cell*, 1);
++}
++
++static void fake_cell_info_finalize(GObject *object)
++{
++	FakeCellInfo *self = THIS(object);
++
++	gutil_ptrv_free((void**)self->cells);
++	G_OBJECT_CLASS(PARENT_CLASS)->finalize(object);
++}
++
++static void fake_cell_info_class_init(FakeCellInfoClass *klass)
++{
++	G_OBJECT_CLASS(klass)->finalize = fake_cell_info_finalize;
++	fake_cell_info_signals[SIGNAL_CHANGED] =
++		g_signal_new(SIGNAL_CHANGED_NAME,
++			G_OBJECT_CLASS_TYPE(klass), G_SIGNAL_RUN_FIRST,
++			0, NULL, NULL, NULL, G_TYPE_NONE, 0);
++}
++
++struct ofono_cell_info *fake_cell_info_new()
++{
++	static const struct ofono_cell_info_proc fake_cell_info_proc = {
++		fake_cell_info_ref_proc,
++		fake_cell_info_unref_proc,
++		fake_cell_info_add_change_handler_proc,
++		fake_cell_info_remove_handler_proc,
++		fake_cell_info_set_update_interval,
++		fake_cell_info_set_enabled
++	};
++
++	FakeCellInfo *self = g_object_new(THIS_TYPE, 0);
++
++	self->info.proc = &fake_cell_info_proc;
++	return &self->info;
++}
++
++int fake_cell_info_update_interval(struct ofono_cell_info *info)
++{
++	return fake_cell_info_cast(info)->interval;
++}
++
++ofono_bool_t fake_cell_info_is_enabled(struct ofono_cell_info *info)
++{
++	return fake_cell_info_cast(info)->enabled;
++}
++
++void fake_cell_info_add_cell(struct ofono_cell_info *info,
++				  const struct ofono_cell* c)
++{
++	FakeCellInfo *self = fake_cell_info_cast(info);
++	gsize n = gutil_ptrv_length(self->cells);
++
++	self->cells = g_renew(struct ofono_cell*, self->cells, n + 2);
++	self->cells[n++] = g_memdup(c, sizeof(*c));
++	self->cells[n] = NULL;
++	info->cells = self->cells;
++}
++
++ofono_bool_t fake_cell_info_remove_cell(struct ofono_cell_info *info,
++	const struct ofono_cell* cell)
++{
++	FakeCellInfo *self = fake_cell_info_cast(info);
++	gsize i, n = gutil_ptrv_length(self->cells);
++
++	for (i = 0; i < n; i++) {
++		struct ofono_cell *known_cell = self->cells[i];
++
++		if (!memcmp(cell, known_cell, sizeof(*cell))) {
++			g_free(known_cell);
++			memmove(self->cells + i, self->cells + i + 1,
++				sizeof(struct ofono_cell*)*(n - i));
++			self->cells = g_renew(struct ofono_cell*,
++				self->cells, n);
++			info->cells = self->cells;
++			return TRUE;
++		}
++	}
++	return FALSE;
++}
++
++void fake_cell_info_remove_all_cells(struct ofono_cell_info *info)
++{
++	FakeCellInfo *self = fake_cell_info_cast(info);
++
++	if (gutil_ptrv_length(self->cells) > 0) {
++		gutil_ptrv_free((void**)self->cells);
++		self->info.cells = self->cells = g_new0(struct ofono_cell*, 1);
++	}
++}
++
++void fake_cell_info_cells_changed(struct ofono_cell_info *info)
++{
++	g_signal_emit(fake_cell_info_cast(info), fake_cell_info_signals
++		[SIGNAL_CHANGED], 0);
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/unit/fake_cell_info.h b/unit/fake_cell_info.h
+new file mode 100644
+index 00000000..b160ea23
+--- /dev/null
++++ b/unit/fake_cell_info.h
+@@ -0,0 +1,39 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2018-2021 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ *  GNU General Public License for more details.
++ */
++
++#ifndef FAKE_CELL_INFO_H
++#define FAKE_CELL_INFO_H
++
++#include <ofono/cell-info.h>
++
++struct ofono_cell_info *fake_cell_info_new(void);
++int fake_cell_info_update_interval(struct ofono_cell_info *info);
++ofono_bool_t fake_cell_info_is_enabled(struct ofono_cell_info *info);
++void fake_cell_info_add_cell(struct ofono_cell_info *info,
++				  const struct ofono_cell* cell);
++ofono_bool_t fake_cell_info_remove_cell(struct ofono_cell_info *info,
++				  const struct ofono_cell* cell);
++void fake_cell_info_remove_all_cells(struct ofono_cell_info *info);
++void fake_cell_info_cells_changed(struct ofono_cell_info *info);
++
++#endif /* FAKE_CELL_INFO_H */
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/unit/test-cell-info-control.c b/unit/test-cell-info-control.c
+new file mode 100644
+index 00000000..d6b9237a
+--- /dev/null
++++ b/unit/test-cell-info-control.c
+@@ -0,0 +1,204 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2021 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ *  GNU General Public License for more details.
++ */
++
++#include "ofono.h"
++
++#include "cell-info.h"
++#include "cell-info-control.h"
++
++#include "fake_cell_info.h"
++
++#include <gutil_log.h>
++#include <gutil_macros.h>
++
++#include <limits.h>
++
++#define TEST_(name) "/cell_info_control/" name
++
++/* ==== null ==== */
++
++static void test_null(void)
++{
++	g_assert(!cell_info_control_get(NULL));
++	g_assert(!cell_info_control_ref(NULL));
++	cell_info_control_unref(NULL);
++	cell_info_control_set_cell_info(NULL, NULL);
++	cell_info_control_drop_all_requests(NULL);
++	cell_info_control_drop_requests(NULL, NULL);
++	cell_info_control_set_enabled(NULL, NULL, FALSE);
++	cell_info_control_set_update_interval(NULL, NULL, FALSE);
++}
++
++/* ==== basic ==== */
++
++static void test_basic(void)
++{
++	const char* path = "/test";
++	CellInfoControl *ctl = cell_info_control_get(path);
++	struct ofono_cell_info *info = fake_cell_info_new();
++	void* tag1 = &ctl;
++	void* tag2 = &info;
++
++	/* Second cell_info_control_get returns the same object */
++	g_assert_cmpstr(ctl->path, == ,path);
++	g_assert(cell_info_control_get(path) == ctl);
++	cell_info_control_unref(ctl);
++
++	g_assert(ctl);
++	g_assert(ctl == cell_info_control_ref(ctl));
++	cell_info_control_unref(ctl);
++
++	cell_info_control_set_cell_info(ctl, info);
++
++	/* NULL tag is ignored */
++	cell_info_control_set_enabled(ctl, NULL, TRUE);
++	cell_info_control_set_update_interval(ctl, NULL, 0);
++	g_assert(!fake_cell_info_is_enabled(info));
++	g_assert_cmpint(fake_cell_info_update_interval(info), == ,INT_MAX);
++
++	/* Update all attributes at once when cell_into is set */
++	cell_info_control_set_cell_info(ctl, NULL);
++	cell_info_control_set_enabled(ctl, tag1, TRUE);
++	cell_info_control_set_update_interval(ctl, tag2, 10);
++	cell_info_control_set_cell_info(ctl, info);
++	g_assert(fake_cell_info_is_enabled(info));
++	g_assert_cmpint(fake_cell_info_update_interval(info), == ,10);
++
++	/* And then drop all requests at once */
++	cell_info_control_drop_all_requests(ctl);
++	g_assert(!fake_cell_info_is_enabled(info));
++	g_assert_cmpint(fake_cell_info_update_interval(info), == ,INT_MAX);
++
++	cell_info_control_set_cell_info(ctl, NULL);
++	cell_info_control_unref(ctl);
++	ofono_cell_info_unref(info);
++}
++
++/* ==== enabled ==== */
++
++static void test_enabled(void)
++{
++	CellInfoControl *ctl = cell_info_control_get("/test");
++	struct ofono_cell_info *info = fake_cell_info_new();
++	void* tag1 = &ctl;
++	void* tag2 = &info;
++	void* wrong_tag = &tag1;
++
++	cell_info_control_set_cell_info(ctl, info);
++
++	g_assert(!fake_cell_info_is_enabled(info));
++	cell_info_control_set_enabled(ctl, tag1, TRUE);
++	g_assert(fake_cell_info_is_enabled(info));
++	cell_info_control_set_enabled(ctl, tag2, TRUE);
++	g_assert(fake_cell_info_is_enabled(info));
++	cell_info_control_set_enabled(ctl, tag1, FALSE);
++	g_assert(fake_cell_info_is_enabled(info));
++	cell_info_control_set_enabled(ctl, tag2, FALSE);
++	g_assert(!fake_cell_info_is_enabled(info));
++	cell_info_control_set_enabled(ctl, tag2, FALSE);
++	g_assert(!fake_cell_info_is_enabled(info));
++
++	/* Do it again and then drop the request */
++	cell_info_control_set_enabled(ctl, tag1, TRUE);
++	cell_info_control_set_enabled(ctl, tag2, TRUE);
++	g_assert(fake_cell_info_is_enabled(info));
++	cell_info_control_drop_requests(ctl, tag1);
++	g_assert(fake_cell_info_is_enabled(info)); /* tag2 is still there */
++	cell_info_control_drop_requests(ctl, NULL); /* Ignored */
++	cell_info_control_drop_requests(ctl, tag1); /* Isn't there */
++	cell_info_control_drop_requests(ctl, wrong_tag); /* Wasn't there */
++	g_assert(fake_cell_info_is_enabled(info));
++	cell_info_control_drop_requests(ctl, tag2);
++	g_assert(!fake_cell_info_is_enabled(info));
++
++	/* These have no effect as all requests are already dropped */
++	cell_info_control_drop_requests(ctl, tag1);
++	g_assert(!fake_cell_info_is_enabled(info));
++	cell_info_control_drop_requests(ctl, tag2);
++	g_assert(!fake_cell_info_is_enabled(info));
++
++	cell_info_control_unref(ctl);
++	ofono_cell_info_unref(info);
++}
++
++/* ==== update_interval ==== */
++
++static void test_update_interval(void)
++{
++	CellInfoControl *ctl = cell_info_control_get("/test");
++	struct ofono_cell_info *info = fake_cell_info_new();
++	void* tag1 = &ctl;
++	void* tag2 = &info;
++	void* wrong_tag = &tag1;
++
++	cell_info_control_set_cell_info(ctl, info);
++
++	cell_info_control_set_update_interval(ctl, tag1, 10);
++	g_assert_cmpint(fake_cell_info_update_interval(info), == ,10);
++	cell_info_control_set_update_interval(ctl, tag2, 5);
++	g_assert_cmpint(fake_cell_info_update_interval(info), == ,5);
++	cell_info_control_set_update_interval(ctl, tag2, INT_MAX);
++	g_assert_cmpint(fake_cell_info_update_interval(info), == ,10);
++	cell_info_control_set_update_interval(ctl, tag1, -1);
++	g_assert_cmpint(fake_cell_info_update_interval(info), == ,INT_MAX);
++	cell_info_control_set_update_interval(ctl, tag1, -1);
++	g_assert_cmpint(fake_cell_info_update_interval(info), == ,INT_MAX);
++
++	/* Do it again and then drop the requests one by one */
++	cell_info_control_set_update_interval(ctl, tag1, 5);
++	cell_info_control_set_update_interval(ctl, tag2, 10);
++	g_assert_cmpint(fake_cell_info_update_interval(info), == ,5);
++	cell_info_control_drop_requests(ctl, NULL); /* Ignored */
++	cell_info_control_drop_requests(ctl, wrong_tag); /* Wasn't there */
++	g_assert_cmpint(fake_cell_info_update_interval(info), == ,5);
++	cell_info_control_drop_requests(ctl, tag1);
++	g_assert_cmpint(fake_cell_info_update_interval(info), == ,10);
++	cell_info_control_drop_requests(ctl, tag2);
++	g_assert_cmpint(fake_cell_info_update_interval(info), == ,INT_MAX);
++
++	/* These have no effect as all requests are already dropped */
++	cell_info_control_drop_requests(ctl, tag1);
++	g_assert_cmpint(fake_cell_info_update_interval(info), == ,INT_MAX);
++	cell_info_control_drop_requests(ctl, tag2);
++	g_assert_cmpint(fake_cell_info_update_interval(info), == ,INT_MAX);
++
++	cell_info_control_unref(ctl);
++	ofono_cell_info_unref(info);
++}
++
++int main(int argc, char *argv[])
++{
++	g_test_init(&argc, &argv, NULL);
++
++	gutil_log_timestamp = FALSE;
++	gutil_log_default.level = g_test_verbose() ?
++		GLOG_LEVEL_VERBOSE : GLOG_LEVEL_NONE;
++	__ofono_log_init("test-cell_info_control",
++		g_test_verbose() ? "*" : NULL, FALSE);
++
++	g_test_add_func(TEST_("null"), test_null);
++	g_test_add_func(TEST_("basic"), test_basic);
++	g_test_add_func(TEST_("enabled"), test_enabled);
++	g_test_add_func(TEST_("update_interval"), test_update_interval);
++	return g_test_run();
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/unit/test-cell-info-dbus.c b/unit/test-cell-info-dbus.c
+new file mode 100644
+index 00000000..72f84b37
+--- /dev/null
++++ b/unit/test-cell-info-dbus.c
+@@ -0,0 +1,1195 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2018-2021 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ *  GNU General Public License for more details.
++ */
++
++#include "test-dbus.h"
++
++#include <ofono/cell-info.h>
++
++#include "cell-info-control.h"
++#include "cell-info-dbus.h"
++#include "fake_cell_info.h"
++
++#include <gutil_log.h>
++#include <gutil_macros.h>
++
++#include "ofono.h"
++
++#define TEST_TIMEOUT                        (10)   /* seconds */
++#define TEST_MODEM_PATH                     "/test"
++#define TEST_SENDER                         ":1.0"
++
++#define CELL_INFO_DBUS_INTERFACE            "org.nemomobile.ofono.CellInfo"
++#define CELL_INFO_DBUS_CELLS_ADDED_SIGNAL   "CellsAdded"
++#define CELL_INFO_DBUS_CELLS_REMOVED_SIGNAL "CellsRemoved"
++#define CELL_INFO_DBUS_UNSUBSCRIBED_SIGNAL  "Unsubscribed"
++
++#define CELL_DBUS_INTERFACE_VERSION         (1)
++#define CELL_DBUS_INTERFACE                 "org.nemomobile.ofono.Cell"
++#define CELL_DBUS_REGISTERED_CHANGED_SIGNAL "RegisteredChanged"
++#define CELL_DBUS_PROPERTY_CHANGED_SIGNAL   "PropertyChanged"
++#define CELL_DBUS_REMOVED_SIGNAL            "Removed"
++
++static gboolean test_debug;
++
++/* Stubs (ofono) */
++
++struct ofono_modem {
++	const char *path;
++};
++
++const char *ofono_modem_get_path(struct ofono_modem *modem)
++{
++	return modem->path;
++}
++
++void ofono_modem_add_interface(struct ofono_modem *modem, const char *iface)
++{
++	DBG("%s %s", modem->path, iface);
++}
++
++/* ==== common ==== */
++
++static gboolean test_timeout(gpointer param)
++{
++	g_assert(!"TIMEOUT");
++	return G_SOURCE_REMOVE;
++}
++
++static guint test_setup_timeout(void)
++{
++	if (test_debug) {
++		return 0;
++	} else {
++		return g_timeout_add_seconds(TEST_TIMEOUT, test_timeout, NULL);
++	}
++}
++
++static gboolean test_loop_quit(gpointer data)
++{
++	g_main_loop_quit(data);
++	return G_SOURCE_REMOVE;
++}
++
++static void test_loop_quit_later(GMainLoop *loop)
++{
++	g_idle_add(test_loop_quit, loop);
++}
++
++static DBusMessage *test_new_cell_info_call(const char *method)
++{
++	DBusMessage *msg = dbus_message_new_method_call(NULL, TEST_MODEM_PATH,
++					CELL_INFO_DBUS_INTERFACE, method);
++
++	g_assert(dbus_message_set_sender(msg, TEST_SENDER));
++	return msg;
++}
++
++static DBusMessage *test_new_cell_call(const char *path, const char *method)
++{
++	DBusMessage *msg = dbus_message_new_method_call(NULL, path,
++					CELL_DBUS_INTERFACE, method);
++
++	g_assert(dbus_message_set_sender(msg, TEST_SENDER));
++	return msg;
++}
++
++static void test_submit_cell_info_call(DBusConnection* connection,
++		const char *method, DBusPendingCallNotifyFunction notify,
++		void *data)
++{
++	DBusMessage *msg = test_new_cell_info_call(method);
++	DBusPendingCall* call;
++
++	g_assert(dbus_connection_send_with_reply(connection, msg, &call,
++						DBUS_TIMEOUT_INFINITE));
++	dbus_pending_call_set_notify(call, notify, data, NULL);
++	dbus_message_unref(msg);
++}
++
++static void test_submit_get_all_call(DBusConnection* connection,
++		const char *cell_path, DBusPendingCallNotifyFunction notify,
++		void *data)
++{
++	DBusMessage *msg;
++	DBusPendingCall* call;
++
++	msg = test_new_cell_call(cell_path, "GetAll");
++	g_assert(dbus_connection_send_with_reply(connection, msg, &call,
++						DBUS_TIMEOUT_INFINITE));
++	dbus_pending_call_set_notify(call, notify, data, NULL);
++	dbus_message_unref(msg);
++}
++
++static void test_check_object_path_array_va(DBusMessageIter *it,
++						const char *path1, va_list va)
++{
++	DBusMessageIter array;
++
++	g_assert(dbus_message_iter_get_arg_type(it) == DBUS_TYPE_ARRAY);
++	dbus_message_iter_recurse(it, &array);
++	dbus_message_iter_next(it);
++
++	if (path1) {
++		const char *path;
++
++		g_assert(!g_strcmp0(test_dbus_get_object_path(&array), path1));
++		while ((path = va_arg(va, char*)) != NULL) {
++			g_assert(!g_strcmp0(test_dbus_get_object_path(&array),
++									path));
++		}
++	}
++
++	g_assert(dbus_message_iter_get_arg_type(&array) == DBUS_TYPE_INVALID);
++	g_assert(dbus_message_iter_get_arg_type(it) == DBUS_TYPE_INVALID);
++}
++
++static void test_check_object_path_array(DBusMessageIter *it,
++						const char *path1, ...)
++{
++	va_list va;
++
++	va_start(va, path1);
++	test_check_object_path_array_va(it, path1, va);
++	va_end(va);
++}
++
++static void test_check_get_cells_reply(DBusPendingCall *call,
++						const char *path1, ...)
++{
++	DBusMessage *reply = dbus_pending_call_steal_reply(call);
++	DBusMessageIter it;
++	va_list va;
++
++	g_assert(dbus_message_get_type(reply) ==
++					DBUS_MESSAGE_TYPE_METHOD_RETURN);
++	dbus_message_iter_init(reply, &it);
++	va_start(va, path1);
++	test_check_object_path_array_va(&it, path1, va);
++	va_end(va);
++
++	dbus_message_unref(reply);
++}
++
++static void test_check_get_all_reply(DBusPendingCall *call,
++			const struct ofono_cell *cell, const char *type)
++{
++	DBusMessage *reply = dbus_pending_call_steal_reply(call);
++	DBusMessageIter it, array;
++
++	g_assert(dbus_message_get_type(reply) ==
++					DBUS_MESSAGE_TYPE_METHOD_RETURN);
++	dbus_message_iter_init(reply, &it);
++	g_assert(test_dbus_get_int32(&it) == CELL_DBUS_INTERFACE_VERSION);
++	g_assert(!g_strcmp0(test_dbus_get_string(&it), type));
++	g_assert(test_dbus_get_bool(&it) == (cell->registered != FALSE));
++	g_assert(dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_ARRAY);
++	dbus_message_iter_recurse(&it, &array);
++	dbus_message_iter_next(&it);
++	/* Validate the properties? */
++	g_assert(dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_INVALID);
++	dbus_message_unref(reply);
++}
++
++static void test_check_empty_reply(DBusPendingCall *call)
++{
++	DBusMessage *reply = dbus_pending_call_steal_reply(call);
++	DBusMessageIter it;
++
++	g_assert(dbus_message_get_type(reply) ==
++					DBUS_MESSAGE_TYPE_METHOD_RETURN);
++	dbus_message_iter_init(reply, &it);
++	g_assert(dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_INVALID);
++	dbus_message_unref(reply);
++}
++
++static void test_check_error(DBusPendingCall *call, const char* name)
++{
++	DBusMessage *reply = dbus_pending_call_steal_reply(call);
++
++	g_assert(dbus_message_is_error(reply, name));
++	dbus_message_unref(reply);
++}
++
++static struct ofono_cell *test_cell_init_gsm1(struct ofono_cell *cell)
++{
++	struct ofono_cell_info_gsm *gsm = &cell->info.gsm;
++
++	memset(cell, 0, sizeof(*cell));
++	cell->type = OFONO_CELL_TYPE_GSM;
++	cell->registered = TRUE;
++	gsm->mcc = 244;
++	gsm->mnc = 5;
++	gsm->lac = 9007;
++	gsm->cid = 42335;
++	gsm->arfcn = INT_MAX;
++	gsm->bsic = INT_MAX;
++	gsm->signalStrength = 26;
++	gsm->bitErrorRate = 99;
++	gsm->timingAdvance = INT_MAX;
++	return cell;
++}
++
++static struct ofono_cell *test_cell_init_gsm2(struct ofono_cell *cell)
++{
++	struct ofono_cell_info_gsm *gsm = &cell->info.gsm;
++
++	memset(cell, 0, sizeof(*cell));
++	cell->type = OFONO_CELL_TYPE_GSM;
++	cell->registered = FALSE;
++	gsm->mcc = 244;
++	gsm->mnc = 5;
++	gsm->lac = 9007;
++	gsm->cid = 35600;
++	gsm->arfcn = INT_MAX;
++	gsm->bsic = INT_MAX;
++	gsm->signalStrength = 8;
++	gsm->bitErrorRate = 99;
++	gsm->timingAdvance = INT_MAX;
++	return cell;
++}
++
++static struct ofono_cell *test_cell_init_wcdma1(struct ofono_cell *cell)
++{
++	struct ofono_cell_info_wcdma *wcdma = &cell->info.wcdma;
++
++	memset(cell, 0, sizeof(*cell));
++	cell->type = OFONO_CELL_TYPE_WCDMA;
++	cell->registered = TRUE;
++	wcdma->mcc = 250;
++	wcdma->mnc = 99;
++	wcdma->lac = 14760;
++	wcdma->cid = 149331616;
++	wcdma->psc = 371;
++	wcdma->uarfcn = INT_MAX;
++	wcdma->signalStrength = 4;
++	wcdma->bitErrorRate = 99;
++	return cell;
++}
++
++static struct ofono_cell *test_cell_init_wcdma2(struct ofono_cell *cell)
++{
++	struct ofono_cell_info_wcdma *wcdma = &cell->info.wcdma;
++
++	memset(cell, 0, sizeof(*cell));
++	cell->type = OFONO_CELL_TYPE_WCDMA;
++	cell->registered = FALSE;
++	wcdma->mcc = INT_MAX;
++	wcdma->mnc = INT_MAX;
++	wcdma->lac = INT_MAX;
++	wcdma->cid = INT_MAX;
++	wcdma->psc = INT_MAX;
++	wcdma->uarfcn = INT_MAX;
++	wcdma->signalStrength = 5;
++	wcdma->bitErrorRate = 99;
++	return cell;
++}
++
++static struct ofono_cell *test_cell_init_lte(struct ofono_cell *cell)
++{
++	struct ofono_cell_info_lte *lte = &cell->info.lte;
++
++	memset(cell, 0, sizeof(*cell));
++	cell->type = OFONO_CELL_TYPE_LTE;
++	cell->registered = TRUE;
++	lte->mcc = 244;
++	lte->mnc = 91;
++	lte->ci = 36591883;
++	lte->pci = 309;
++	lte->tac = 4030;
++	lte->earfcn = INT_MAX;
++	lte->signalStrength = 17;
++	lte->rsrp = 106;
++	lte->rsrq = 6;
++	lte->rssnr = INT_MAX;
++	lte->cqi = INT_MAX;
++	lte->timingAdvance = INT_MAX;
++	return cell;
++}
++
++static struct ofono_cell *test_cell_init_nr(struct ofono_cell *cell)
++{
++	struct ofono_cell_info_nr *nr = &cell->info.nr;
++
++	memset(cell, 0, sizeof(*cell));
++	cell->type = OFONO_CELL_TYPE_NR;
++	cell->registered = TRUE;
++	nr->mcc = 244;
++	nr->mnc = 91;
++	nr->nci = 36591883;
++	nr->pci = 309;
++	nr->tac = 4030;
++	nr->nrarfcn = INT_MAX;
++	nr->ssRsrp = 106;
++	nr->ssRsrq = 6;
++	nr->ssSinr = INT_MAX;
++	nr->csiRsrp = 106;
++	nr->csiRsrq = 6;
++	nr->csiSinr = INT_MAX;
++	return cell;
++}
++
++/* ==== Misc ==== */
++
++static void test_misc(void)
++{
++	struct ofono_modem modem;
++
++	modem.path = TEST_MODEM_PATH;
++
++	/* NULL resistance */
++	g_assert(!cell_info_dbus_new(NULL, NULL));
++	g_assert(!cell_info_dbus_new(&modem, NULL));
++	cell_info_dbus_free(NULL);
++
++	/* Calling __ofono_dbus_cleanup() without __ofono_dbus_init() is ok */
++	__ofono_dbus_cleanup();
++}
++
++/* ==== GetCells ==== */
++
++struct test_get_cells_data {
++	struct ofono_modem modem;
++	struct test_dbus_context context;
++	struct cell_info_dbus *dbus;
++	CellInfoControl *ctl;
++};
++
++static void test_get_cells_call(struct test_get_cells_data *test,
++				DBusPendingCallNotifyFunction notify)
++{
++	test_submit_cell_info_call(test->context.client_connection, "GetCells",
++								notify, test);
++}
++
++static void test_get_cells_start_reply3(DBusPendingCall *call, void *data)
++{
++	struct test_get_cells_data *test = data;
++	DBusMessageIter it;
++	DBusMessage *signal = test_dbus_take_signal(&test->context,
++				test->modem.path, CELL_INFO_DBUS_INTERFACE,
++				CELL_INFO_DBUS_CELLS_REMOVED_SIGNAL);
++
++	DBG("");
++	test_check_get_cells_reply(call, "/test/cell_1", NULL);
++	dbus_pending_call_unref(call);
++
++	/* Validate the signal */
++	g_assert(signal);
++	dbus_message_iter_init(signal, &it);
++	test_check_object_path_array(&it, "/test/cell_0", NULL);
++	dbus_message_unref(signal);
++
++	test_loop_quit_later(test->context.loop);
++}
++
++static void test_get_cells_start_reply2(DBusPendingCall *call, void *data)
++{
++	struct test_get_cells_data *test = data;
++	struct ofono_cell_info *info = test->ctl->info;
++	const char *cell_added = "/test/cell_1";
++	struct ofono_cell cell;
++	DBusMessageIter it;
++	DBusMessage *signal = test_dbus_take_signal(&test->context,
++				test->modem.path, CELL_INFO_DBUS_INTERFACE,
++				CELL_INFO_DBUS_CELLS_ADDED_SIGNAL);
++
++	DBG("");
++	test_check_get_cells_reply(call, "/test/cell_0", cell_added, NULL);
++	dbus_pending_call_unref(call);
++
++	/* Validate the signal */
++	g_assert(signal);
++	dbus_message_iter_init(signal, &it);
++	test_check_object_path_array(&it, cell_added, NULL);
++	dbus_message_unref(signal);
++
++	/* Remove "/test/cell_0" */
++	g_assert(fake_cell_info_remove_cell(info, test_cell_init_gsm1(&cell)));
++	fake_cell_info_cells_changed(info);
++	test_get_cells_call(test, test_get_cells_start_reply3);
++}
++
++static void test_get_cells_start_reply1(DBusPendingCall *call, void *data)
++{
++	struct test_get_cells_data *test = data;
++	struct ofono_cell_info *info = test->ctl->info;
++	struct ofono_cell cell;
++
++	DBG("");
++	test_check_get_cells_reply(call, "/test/cell_0", NULL);
++	dbus_pending_call_unref(call);
++
++	/* Add "/test/cell_1" */
++	fake_cell_info_add_cell(info, test_cell_init_gsm2(&cell));
++	fake_cell_info_cells_changed(info);
++	test_get_cells_call(test, test_get_cells_start_reply2);
++}
++
++static void test_get_cells_start(struct test_dbus_context *context)
++{
++	struct ofono_cell cell;
++	struct ofono_cell_info *info = fake_cell_info_new();
++	struct test_get_cells_data *test =
++		G_CAST(context, struct test_get_cells_data, context);
++
++	DBG("");
++	fake_cell_info_add_cell(info, test_cell_init_gsm1(&cell));
++	test->ctl = cell_info_control_get(test->modem.path);
++	cell_info_control_set_cell_info(test->ctl, info);
++
++	test->dbus = cell_info_dbus_new(&test->modem, test->ctl);
++	g_assert(test->dbus);
++	ofono_cell_info_unref(info);
++
++	test_get_cells_call(test, test_get_cells_start_reply1);
++}
++
++static void test_get_cells(void)
++{
++	struct test_get_cells_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test.modem.path = TEST_MODEM_PATH;
++	test.context.start = test_get_cells_start;
++	test_dbus_setup(&test.context);
++
++	g_main_loop_run(test.context.loop);
++
++	cell_info_control_unref(test.ctl);
++	cell_info_dbus_free(test.dbus);
++	test_dbus_shutdown(&test.context);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++/* ==== GetAll ==== */
++
++struct test_get_all_data {
++	struct ofono_modem modem;
++	struct test_dbus_context context;
++	struct cell_info_dbus *dbus;
++	struct ofono_cell cell;
++	const char *type;
++};
++
++static void test_get_all_reply(DBusPendingCall *call, void *data)
++{
++	struct test_get_all_data *test = data;
++
++	DBG("");
++	test_check_get_all_reply(call, &test->cell, test->type);
++	dbus_pending_call_unref(call);
++
++	test_loop_quit_later(test->context.loop);
++}
++
++static void test_get_all_start(struct test_dbus_context *context)
++{
++	struct test_get_all_data *test =
++		G_CAST(context, struct test_get_all_data, context);
++	CellInfoControl *ctl = cell_info_control_get(test->modem.path);
++	struct ofono_cell_info *info = fake_cell_info_new();
++
++	DBG("");
++	fake_cell_info_add_cell(info, &test->cell);
++	cell_info_control_set_cell_info(ctl, info);
++	test->dbus = cell_info_dbus_new(&test->modem, ctl);
++	g_assert(test->dbus);
++	ofono_cell_info_unref(info);
++	cell_info_control_unref(ctl);
++
++	test_submit_get_all_call(context->client_connection, "/test/cell_0",
++						test_get_all_reply, test);
++}
++
++static void test_get_all(const struct ofono_cell *cell, const char *type)
++{
++	struct test_get_all_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test.modem.path = TEST_MODEM_PATH;
++	test.context.start = test_get_all_start;
++	test.cell = *cell;
++	test.type = type;
++	test_dbus_setup(&test.context);
++
++	g_main_loop_run(test.context.loop);
++
++	cell_info_dbus_free(test.dbus);
++	test_dbus_shutdown(&test.context);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++static void test_get_all1(void)
++{
++	struct ofono_cell cell;
++
++	test_get_all(test_cell_init_gsm1(&cell), "gsm");
++}
++
++static void test_get_all2(void)
++{
++	struct ofono_cell cell;
++
++	test_get_all(test_cell_init_wcdma2(&cell), "wcdma");
++}
++
++static void test_get_all3(void)
++{
++	struct ofono_cell cell;
++
++	test_get_all(test_cell_init_lte(&cell), "lte");
++}
++
++static void test_get_all4(void)
++{
++	struct ofono_cell cell;
++
++	test_get_all(test_cell_init_nr(&cell), "nr");
++}
++
++static void test_get_all5(void)
++{
++	struct ofono_cell cell;
++
++	/* Invalid cell */
++	memset(&cell, 0xff, sizeof(cell));
++	test_get_all(&cell, "unknown");
++}
++
++/* ==== GetInterfaceVersion ==== */
++
++struct test_get_version_data {
++	struct ofono_modem modem;
++	struct test_dbus_context context;
++	struct cell_info_dbus *dbus;
++};
++
++static void test_get_version_reply(DBusPendingCall *call, void *data)
++{
++	struct test_get_version_data *test = data;
++	DBusMessage *reply = dbus_pending_call_steal_reply(call);
++	dbus_int32_t version;
++
++	DBG("");
++	g_assert(dbus_message_get_type(reply) ==
++					DBUS_MESSAGE_TYPE_METHOD_RETURN);
++	g_assert(dbus_message_get_args(reply, NULL,
++					DBUS_TYPE_INT32, &version,
++					DBUS_TYPE_INVALID));
++	g_assert(version == CELL_DBUS_INTERFACE_VERSION);
++	dbus_message_unref(reply);
++	dbus_pending_call_unref(call);
++
++	test_loop_quit_later(test->context.loop);
++}
++
++static void test_get_version_start(struct test_dbus_context *context)
++{
++	DBusPendingCall *call;
++	DBusMessage *msg;
++	struct ofono_cell cell;
++	struct test_get_version_data *test =
++		G_CAST(context, struct test_get_version_data, context);
++	CellInfoControl *ctl = cell_info_control_get(test->modem.path);
++	struct ofono_cell_info *info = fake_cell_info_new();
++
++	DBG("");
++	fake_cell_info_add_cell(info, test_cell_init_gsm1(&cell));
++	cell_info_control_set_cell_info(ctl, info);
++	test->dbus = cell_info_dbus_new(&test->modem, ctl);
++	g_assert(test->dbus);
++	ofono_cell_info_unref(info);
++	cell_info_control_unref(ctl);
++
++	msg = test_new_cell_call("/test/cell_0", "GetInterfaceVersion");
++	g_assert(dbus_connection_send_with_reply(context->client_connection,
++					msg, &call, DBUS_TIMEOUT_INFINITE));
++	dbus_pending_call_set_notify(call, test_get_version_reply, test, NULL);
++	dbus_message_unref(msg);
++}
++
++static void test_get_version(void)
++{
++	struct test_get_version_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test.modem.path = TEST_MODEM_PATH;
++	test.context.start = test_get_version_start;
++	test_dbus_setup(&test.context);
++
++	g_main_loop_run(test.context.loop);
++
++	cell_info_dbus_free(test.dbus);
++	test_dbus_shutdown(&test.context);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++/* ==== GetType ==== */
++
++struct test_get_type_data {
++	struct ofono_modem modem;
++	struct test_dbus_context context;
++	struct cell_info_dbus *dbus;
++};
++
++static void test_get_type_reply(DBusPendingCall *call, void *data)
++{
++	struct test_get_type_data *test = data;
++	DBusMessage *reply = dbus_pending_call_steal_reply(call);
++	DBusMessageIter it;
++
++	DBG("");
++	g_assert(dbus_message_get_type(reply) ==
++					DBUS_MESSAGE_TYPE_METHOD_RETURN);
++	dbus_message_iter_init(reply, &it);
++	g_assert(!g_strcmp0(test_dbus_get_string(&it), "wcdma"));
++	g_assert(dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_INVALID);
++	dbus_message_unref(reply);
++	dbus_pending_call_unref(call);
++
++	test_loop_quit_later(test->context.loop);
++}
++
++static void test_get_type_start(struct test_dbus_context *context)
++{
++	DBusPendingCall *call;
++	DBusMessage *msg;
++	struct ofono_cell cell;
++	struct test_get_type_data *test =
++		G_CAST(context, struct test_get_type_data, context);
++	CellInfoControl *ctl = cell_info_control_get(test->modem.path);
++	struct ofono_cell_info *info = fake_cell_info_new();
++
++	DBG("");
++	fake_cell_info_add_cell(info, test_cell_init_wcdma1(&cell));
++	cell_info_control_set_cell_info(ctl, info);
++	test->dbus = cell_info_dbus_new(&test->modem, ctl);
++	g_assert(test->dbus);
++	ofono_cell_info_unref(info);
++	cell_info_control_unref(ctl);
++
++	msg = test_new_cell_call("/test/cell_0", "GetType");
++	g_assert(dbus_connection_send_with_reply(context->client_connection,
++					msg, &call, DBUS_TIMEOUT_INFINITE));
++	dbus_pending_call_set_notify(call, test_get_type_reply, test, NULL);
++	dbus_message_unref(msg);
++}
++
++static void test_get_type(void)
++{
++	struct test_get_type_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test.modem.path = TEST_MODEM_PATH;
++	test.context.start = test_get_type_start;
++	test_dbus_setup(&test.context);
++
++	g_main_loop_run(test.context.loop);
++
++	cell_info_dbus_free(test.dbus);
++	test_dbus_shutdown(&test.context);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++/* ==== GetRegistered ==== */
++
++struct test_get_registered_data {
++	struct ofono_modem modem;
++	struct test_dbus_context context;
++	struct cell_info_dbus *dbus;
++};
++
++static void test_get_registered_reply(DBusPendingCall *call, void *data)
++{
++	struct test_get_registered_data *test = data;
++	DBusMessage *reply = dbus_pending_call_steal_reply(call);
++	DBusMessageIter it;
++
++	DBG("");
++	g_assert(dbus_message_get_type(reply) ==
++					DBUS_MESSAGE_TYPE_METHOD_RETURN);
++	dbus_message_iter_init(reply, &it);
++	g_assert(test_dbus_get_bool(&it) == TRUE);
++	g_assert(dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_INVALID);
++	dbus_message_unref(reply);
++	dbus_pending_call_unref(call);
++
++	test_loop_quit_later(test->context.loop);
++}
++
++static void test_get_registered_start(struct test_dbus_context *context)
++{
++	DBusPendingCall *call;
++	DBusMessage *msg;
++	struct ofono_cell cell;
++	struct test_get_registered_data *test =
++		G_CAST(context, struct test_get_registered_data, context);
++	CellInfoControl *ctl = cell_info_control_get(test->modem.path);
++	struct ofono_cell_info *info = fake_cell_info_new();
++
++	DBG("");
++	fake_cell_info_add_cell(info, test_cell_init_wcdma1(&cell));
++	cell_info_control_set_cell_info(ctl, info);
++	test->dbus = cell_info_dbus_new(&test->modem, ctl);
++	g_assert(test->dbus);
++	ofono_cell_info_unref(info);
++	cell_info_control_unref(ctl);
++
++	msg = test_new_cell_call("/test/cell_0", "GetRegistered");
++	g_assert(dbus_connection_send_with_reply(context->client_connection,
++					msg, &call, DBUS_TIMEOUT_INFINITE));
++	dbus_pending_call_set_notify(call, test_get_registered_reply, test,
++									NULL);
++	dbus_message_unref(msg);
++}
++
++static void test_get_registered(void)
++{
++	struct test_get_registered_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test.modem.path = TEST_MODEM_PATH;
++	test.context.start = test_get_registered_start;
++	test_dbus_setup(&test.context);
++
++	g_main_loop_run(test.context.loop);
++
++	cell_info_dbus_free(test.dbus);
++	test_dbus_shutdown(&test.context);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++/* ==== GetProperties ==== */
++
++struct test_get_properties_data {
++	struct ofono_modem modem;
++	struct test_dbus_context context;
++	struct cell_info_dbus *dbus;
++};
++
++static void test_get_properties_reply(DBusPendingCall *call, void *data)
++{
++	struct test_get_properties_data *test = data;
++	DBusMessage *reply = dbus_pending_call_steal_reply(call);
++	DBusMessageIter it, array;
++
++	DBG("");
++	g_assert(dbus_message_get_type(reply) ==
++					DBUS_MESSAGE_TYPE_METHOD_RETURN);
++	dbus_message_iter_init(reply, &it);
++	g_assert(dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_ARRAY);
++	dbus_message_iter_recurse(&it, &array);
++	dbus_message_iter_next(&it);
++	/* Validate the properties? */
++	g_assert(dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_INVALID);
++	dbus_message_unref(reply);
++	dbus_pending_call_unref(call);
++
++	test_loop_quit_later(test->context.loop);
++}
++
++static void test_get_properties_start(struct test_dbus_context *context)
++{
++	DBusPendingCall *call;
++	DBusMessage *msg;
++	struct ofono_cell cell;
++	struct test_get_properties_data *test =
++		G_CAST(context, struct test_get_properties_data, context);
++	CellInfoControl *ctl = cell_info_control_get(test->modem.path);
++	struct ofono_cell_info *info = fake_cell_info_new();
++
++	DBG("");
++	fake_cell_info_add_cell(info, test_cell_init_wcdma2(&cell));
++	cell_info_control_set_cell_info(ctl, info);
++	test->dbus = cell_info_dbus_new(&test->modem, ctl);
++	g_assert(test->dbus);
++	ofono_cell_info_unref(info);
++	cell_info_control_unref(ctl);
++
++	msg = test_new_cell_call("/test/cell_0", "GetProperties");
++	g_assert(dbus_connection_send_with_reply(context->client_connection,
++					msg, &call, DBUS_TIMEOUT_INFINITE));
++	dbus_pending_call_set_notify(call, test_get_properties_reply, test,
++									NULL);
++	dbus_message_unref(msg);
++}
++
++static void test_get_properties(void)
++{
++	struct test_get_properties_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test.modem.path = TEST_MODEM_PATH;
++	test.context.start = test_get_properties_start;
++	test_dbus_setup(&test.context);
++
++	g_main_loop_run(test.context.loop);
++
++	cell_info_dbus_free(test.dbus);
++	test_dbus_shutdown(&test.context);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++/* ==== RegisteredChanged ==== */
++
++struct test_registered_changed_data {
++	struct ofono_modem modem;
++	struct test_dbus_context context;
++	struct cell_info_dbus *dbus;
++	struct ofono_cell cell;
++	CellInfoControl *ctl;
++	const char *type;
++	const char *cell_path;
++};
++
++static void test_registered_changed_reply2(DBusPendingCall *call, void *data)
++{
++	struct test_registered_changed_data *test = data;
++
++	DBG("");
++	test_check_get_all_reply(call, &test->cell, test->type);
++	dbus_pending_call_unref(call);
++
++	test_loop_quit_later(test->context.loop);
++}
++
++static void test_registered_changed_reply1(DBusPendingCall *call, void *data)
++{
++	struct test_registered_changed_data *test = data;
++	struct ofono_cell_info *info = test->ctl->info;
++	struct ofono_cell *first_cell;
++
++	DBG("");
++	test_check_get_cells_reply(call, test->cell_path, NULL);
++	dbus_pending_call_unref(call);
++
++	/* Trigger "RegisteredChanged" signal */
++	first_cell = info->cells[0];
++	test->cell.registered =
++	first_cell->registered = !first_cell->registered;
++	fake_cell_info_cells_changed(info);
++
++	test_submit_get_all_call(test->context.client_connection,
++		test->cell_path, test_registered_changed_reply2, test);
++}
++
++static void test_registered_changed_start(struct test_dbus_context *context)
++{
++	struct ofono_cell_info *info = fake_cell_info_new();
++	struct test_registered_changed_data *test =
++		G_CAST(context, struct test_registered_changed_data, context);
++
++	DBG("");
++	fake_cell_info_add_cell(info, &test->cell);
++	test->ctl = cell_info_control_get(test->modem.path);
++	cell_info_control_set_cell_info(test->ctl, info);
++
++	test->dbus = cell_info_dbus_new(&test->modem, test->ctl);
++	g_assert(test->dbus);
++	ofono_cell_info_unref(info);
++
++	/* Submit GetCells to enable "RegisteredChanged" signals */
++	test_submit_cell_info_call(test->context.client_connection, "GetCells",
++					test_registered_changed_reply1, test);
++}
++
++static void test_registered_changed(void)
++{
++	struct test_registered_changed_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test.modem.path = TEST_MODEM_PATH;
++	test.context.start = test_registered_changed_start;
++	test_cell_init_gsm1(&test.cell);
++	test.type = "gsm";
++	test.cell_path = "/test/cell_0";
++	test_dbus_setup(&test.context);
++
++	g_main_loop_run(test.context.loop);
++
++	/* We must have received "RegisteredChanged" signal */
++	g_assert(test_dbus_find_signal(&test.context, test.cell_path,
++		CELL_DBUS_INTERFACE, CELL_DBUS_REGISTERED_CHANGED_SIGNAL));
++
++	cell_info_control_unref(test.ctl);
++	cell_info_dbus_free(test.dbus);
++	test_dbus_shutdown(&test.context);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++/* ==== PropertyChanged ==== */
++
++struct test_property_changed_data {
++	struct ofono_modem modem;
++	struct test_dbus_context context;
++	struct cell_info_dbus *dbus;
++	struct ofono_cell cell;
++	CellInfoControl *ctl;
++	const char *type;
++	const char *cell_path;
++};
++
++static void test_property_changed_reply2(DBusPendingCall *call, void *data)
++{
++	struct test_property_changed_data *test = data;
++
++	DBG("");
++	test_check_get_all_reply(call, &test->cell, test->type);
++	dbus_pending_call_unref(call);
++
++	test_loop_quit_later(test->context.loop);
++	test_dbus_watch_disconnect_all();
++}
++
++static void test_property_changed_reply1(DBusPendingCall *call, void *data)
++{
++	struct test_property_changed_data *test = data;
++	struct ofono_cell_info *info = test->ctl->info;
++	struct ofono_cell *first_cell;
++
++	DBG("");
++	test_check_get_cells_reply(call, test->cell_path, NULL);
++	dbus_pending_call_unref(call);
++
++	/* Trigger "PropertyChanged" signal */
++	first_cell = info->cells[0];
++	test->cell.info.gsm.signalStrength =
++		(++(first_cell->info.gsm.signalStrength));
++	fake_cell_info_cells_changed(info);
++
++	test_submit_get_all_call(test->context.client_connection,
++			test->cell_path, test_property_changed_reply2, test);
++}
++
++static void test_property_changed_start(struct test_dbus_context *context)
++{
++	struct ofono_cell_info *info = fake_cell_info_new();
++	struct test_property_changed_data *test =
++		G_CAST(context, struct test_property_changed_data, context);
++
++	DBG("");
++	fake_cell_info_add_cell(info, &test->cell);
++	test->ctl = cell_info_control_get(test->modem.path);
++	cell_info_control_set_cell_info(test->ctl, info);
++
++	test->dbus = cell_info_dbus_new(&test->modem, test->ctl);
++	g_assert(test->dbus);
++	ofono_cell_info_unref(info);
++
++	/* Submit GetCells to enable "PropertyChanged" signals */
++	test_submit_cell_info_call(test->context.client_connection, "GetCells",
++					test_property_changed_reply1, test);
++}
++
++static void test_property_changed(void)
++{
++	struct test_property_changed_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test.modem.path = TEST_MODEM_PATH;
++	test.context.start = test_property_changed_start;
++	test_cell_init_gsm1(&test.cell);
++	test.type = "gsm";
++	test.cell_path = "/test/cell_0";
++	test_dbus_setup(&test.context);
++
++	g_main_loop_run(test.context.loop);
++
++	/* We must have received "PropertyChanged" signal */
++	g_assert(test_dbus_find_signal(&test.context, test.cell_path,
++		CELL_DBUS_INTERFACE, CELL_DBUS_PROPERTY_CHANGED_SIGNAL));
++
++	cell_info_control_unref(test.ctl);
++	cell_info_dbus_free(test.dbus);
++	test_dbus_shutdown(&test.context);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++/* ==== Unsubscribe ==== */
++
++struct test_unsubscribe_data {
++	struct ofono_modem modem;
++	struct test_dbus_context context;
++	struct cell_info_dbus *dbus;
++	struct ofono_cell cell;
++	CellInfoControl *ctl;
++	const char *type;
++	const char *cell_path;
++};
++
++static void test_unsubscribe_reply3(DBusPendingCall *call, void *data)
++{
++	struct test_unsubscribe_data *test = data;
++
++	DBG("");
++	test_check_error(call, OFONO_ERROR_INTERFACE ".Failed");
++	dbus_pending_call_unref(call);
++
++	test_loop_quit_later(test->context.loop);
++	test_dbus_watch_disconnect_all();
++}
++
++static void test_unsubscribe_reply2(DBusPendingCall *call, void *data)
++{
++	struct test_unsubscribe_data *test = data;
++	struct ofono_cell_info *info = test->ctl->info;
++	struct ofono_cell *first_cell;
++
++	DBG("");
++	test_check_empty_reply(call);
++	dbus_pending_call_unref(call);
++
++	/* No "PropertyChanged" signal is expected because it's disabled */
++	first_cell = info->cells[0];
++	test->cell.info.gsm.signalStrength =
++		(++(first_cell->info.gsm.signalStrength));
++	fake_cell_info_cells_changed(info);
++
++	/* Submit Unsubscribe and expect and error */
++	test_submit_cell_info_call(test->context.client_connection,
++			"Unsubscribe", test_unsubscribe_reply3, test);
++}
++
++static void test_unsubscribe_reply1(DBusPendingCall *call, void *data)
++{
++	struct test_unsubscribe_data *test = data;
++
++	DBG("");
++	test_check_get_cells_reply(call, test->cell_path, NULL);
++	dbus_pending_call_unref(call);
++
++	/* Submit Unsubscribe to disable "PropertyChanged" signals */
++	test_submit_cell_info_call(test->context.client_connection,
++			"Unsubscribe", test_unsubscribe_reply2, test);
++}
++
++static void test_unsubscribe_start(struct test_dbus_context *context)
++{
++	struct test_unsubscribe_data *test =
++		G_CAST(context, struct test_unsubscribe_data, context);
++	struct ofono_cell_info *info = fake_cell_info_new();
++
++	DBG("");
++	fake_cell_info_add_cell(info, &test->cell);
++	test->ctl = cell_info_control_get(test->modem.path);
++	cell_info_control_set_cell_info(test->ctl, info);
++
++	test->dbus = cell_info_dbus_new(&test->modem, test->ctl);
++	g_assert(test->dbus);
++
++	/* Submit GetCells to enable "PropertyChanged" signals */
++	test_submit_cell_info_call(test->context.client_connection, "GetCells",
++					test_unsubscribe_reply1, test);
++}
++
++static void test_unsubscribe(void)
++{
++	struct test_unsubscribe_data test;
++	guint timeout = test_setup_timeout();
++
++	memset(&test, 0, sizeof(test));
++	test.modem.path = TEST_MODEM_PATH;
++	test.context.start = test_unsubscribe_start;
++	test_cell_init_gsm1(&test.cell);
++	test.type = "gsm";
++	test.cell_path = "/test/cell_0";
++	test_dbus_setup(&test.context);
++
++	g_main_loop_run(test.context.loop);
++
++	/* We must have received "Unsubscribed" signal */
++	g_assert(test_dbus_find_signal(&test.context, test.modem.path,
++		CELL_INFO_DBUS_INTERFACE, CELL_INFO_DBUS_UNSUBSCRIBED_SIGNAL));
++
++	cell_info_control_unref(test.ctl);
++	cell_info_dbus_free(test.dbus);
++	test_dbus_shutdown(&test.context);
++	if (timeout) {
++		g_source_remove(timeout);
++	}
++}
++
++#define TEST_(name) "/cell-info-dbus/" name
++
++int main(int argc, char *argv[])
++{
++	int i;
++
++	g_test_init(&argc, &argv, NULL);
++	for (i=1; i<argc; i++) {
++		const char *arg = argv[i];
++		if (!strcmp(arg, "-d") || !strcmp(arg, "--debug")) {
++			test_debug = TRUE;
++		} else {
++			GWARN("Unsupported command line option %s", arg);
++		}
++	}
++
++	gutil_log_timestamp = FALSE;
++	gutil_log_default.level = g_test_verbose() ?
++		GLOG_LEVEL_VERBOSE : GLOG_LEVEL_NONE;
++	__ofono_log_init("test-cell-info-dbus",
++				g_test_verbose() ? "*" : NULL,
++				FALSE);
++
++	g_test_add_func(TEST_("Misc"), test_misc);
++	g_test_add_func(TEST_("GetCells"), test_get_cells);
++	g_test_add_func(TEST_("GetAll1"), test_get_all1);
++	g_test_add_func(TEST_("GetAll2"), test_get_all2);
++	g_test_add_func(TEST_("GetAll3"), test_get_all3);
++	g_test_add_func(TEST_("GetAll4"), test_get_all4);
++	g_test_add_func(TEST_("GetAll5"), test_get_all5);
++	g_test_add_func(TEST_("GetInterfaceVersion"), test_get_version);
++	g_test_add_func(TEST_("GetType"), test_get_type);
++	g_test_add_func(TEST_("GetRegistered"), test_get_registered);
++	g_test_add_func(TEST_("GetProperties"), test_get_properties);
++	g_test_add_func(TEST_("RegisteredChanged"), test_registered_changed);
++	g_test_add_func(TEST_("PropertyChanged"), test_property_changed);
++	g_test_add_func(TEST_("Unsubscribe"), test_unsubscribe);
++
++	return g_test_run();
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
+diff --git a/unit/test-cell-info.c b/unit/test-cell-info.c
+new file mode 100644
+index 00000000..b039f3ab
+--- /dev/null
++++ b/unit/test-cell-info.c
+@@ -0,0 +1,288 @@
++/*
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2017-2021 Jolla Ltd.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ *  GNU General Public License for more details.
++ */
++
++#include <ofono/cell-info.h>
++
++#include <gutil_macros.h>
++#include <gutil_log.h>
++
++#include "ofono.h"
++
++/* Fake cell_info */
++
++#define FAKE_HANDLER_ID (1)
++
++struct test_cell_info {
++	struct ofono_cell_info info;
++	int refcount;
++	int interval;
++	gboolean enabled;
++};
++
++static void test_cell_info_ref(struct ofono_cell_info *info)
++{
++	DBG("");
++	G_CAST(info, struct test_cell_info, info)->refcount++;
++}
++
++static void test_cell_info_unref(struct ofono_cell_info *info)
++{
++	DBG("");
++	G_CAST(info, struct test_cell_info, info)->refcount--;
++}
++
++static gulong test_cell_info_add_change_handler
++	(struct ofono_cell_info *info, ofono_cell_info_cb_t cb, void *arg)
++{
++	DBG("");
++	return FAKE_HANDLER_ID;
++}
++
++static void test_cell_info_remove_handler(struct ofono_cell_info *info,
++	gulong id)
++{
++	DBG("%lu", id);
++	g_assert_cmpuint(id, == ,FAKE_HANDLER_ID);
++}
++
++static void test_cell_info_set_update_interval(struct ofono_cell_info *info,
++	int ms)
++{
++	G_CAST(info, struct test_cell_info, info)->interval = ms;
++}
++
++static void test_cell_info_set_enabled(struct ofono_cell_info *info,
++	ofono_bool_t enabled)
++{
++	DBG("%d", enabled);
++	G_CAST(info, struct test_cell_info, info)->enabled = enabled;
++}
++
++static const struct ofono_cell_info_proc test_cell_info_proc = {
++	test_cell_info_ref,
++	test_cell_info_unref,
++	test_cell_info_add_change_handler,
++	test_cell_info_remove_handler,
++	test_cell_info_set_update_interval,
++	test_cell_info_set_enabled
++};
++
++static const struct ofono_cell_info_proc dummy_cell_info_proc = {};
++
++/* ==== basic ==== */
++
++static void test_basic_cb(struct ofono_cell_info *ci, void *data)
++{
++	g_assert_not_reached();
++}
++
++static void test_basic(void)
++{
++	struct test_cell_info test = {
++		{ &test_cell_info_proc, NULL }, 0, 0, FALSE
++	};
++
++	struct ofono_cell_info dummy = {
++		&dummy_cell_info_proc, NULL
++	};
++
++	/* NULL resistance */
++	g_assert(!ofono_cell_info_ref(NULL));
++	g_assert(ofono_cell_info_ref(&dummy) == &dummy);
++	ofono_cell_info_unref(NULL);
++	ofono_cell_info_unref(&dummy);
++	g_assert(!ofono_cell_info_add_change_handler(NULL, NULL, NULL));
++	g_assert(!ofono_cell_info_add_change_handler(&dummy, NULL, NULL));
++	ofono_cell_info_remove_handler(NULL, 0);
++	ofono_cell_info_remove_handler(&dummy, 0);
++	ofono_cell_info_set_update_interval(NULL, 0);
++	ofono_cell_info_set_update_interval(&dummy, 0);
++	ofono_cell_info_set_enabled(NULL, TRUE);
++	ofono_cell_info_set_enabled(&dummy, TRUE);
++
++	/* Make sure that callbacks are being invoked */
++	g_assert(ofono_cell_info_ref(&test.info) == &test.info);
++	g_assert_cmpint(test.refcount, == ,1);
++	g_assert(!ofono_cell_info_add_change_handler(&test.info, NULL, NULL));
++	g_assert_cmpuint(ofono_cell_info_add_change_handler(&test.info,
++		test_basic_cb, NULL), == ,FAKE_HANDLER_ID);
++	ofono_cell_info_remove_handler(&test.info, 0);
++	ofono_cell_info_remove_handler(&test.info, FAKE_HANDLER_ID);
++
++	g_assert_cmpint(test.interval, == ,0);
++	ofono_cell_info_set_update_interval(&test.info, 10);
++	g_assert_cmpint(test.interval, == ,10);
++
++	g_assert(!test.enabled);
++	ofono_cell_info_set_enabled(&test.info, TRUE);
++	g_assert(test.enabled);
++	ofono_cell_info_unref(&test.info);
++	g_assert_cmpint(test.refcount, == ,0);
++}
++
++/* ==== compare ==== */
++
++static void test_compare(void)
++{
++	struct ofono_cell c1, c2;
++
++	memset(&c1, 0, sizeof(c1));
++	memset(&c2, 0, sizeof(c2));
++
++	g_assert(!ofono_cell_compare_location(NULL, NULL));
++	g_assert(ofono_cell_compare_location(&c1, NULL) > 0);
++	g_assert(ofono_cell_compare_location(NULL, &c2) < 0);
++
++	c1.type = OFONO_CELL_TYPE_GSM;
++	c2.type = OFONO_CELL_TYPE_WCDMA;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	g_assert(ofono_cell_compare_location(&c2, &c1) > 0);
++
++	/* GSM */
++	c1.type = OFONO_CELL_TYPE_GSM;
++	c2 = c1;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.gsm.mcc++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	c2 = c1; c2.info.gsm.mnc++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	c2 = c1; c2.info.gsm.lac++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	c2 = c1; c2.info.gsm.cid++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	/* Other attributes are not being compared */
++	c2 = c1; c2.info.gsm.arfcn++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.gsm.bsic++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.gsm.signalStrength++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.gsm.bitErrorRate++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.gsm.bitErrorRate++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++
++	/* WCDMA */
++	c1.type = OFONO_CELL_TYPE_WCDMA;
++	c2 = c1;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.wcdma.mcc++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	c2 = c1; c2.info.wcdma.mnc++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	c2 = c1; c2.info.wcdma.lac++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	c2 = c1; c2.info.wcdma.cid++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	/* Other attributes are not being compared */
++	c2 = c1; c2.info.wcdma.psc++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.wcdma.uarfcn++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.wcdma.signalStrength++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.wcdma.bitErrorRate++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++
++	/* LTE */
++	c1.type = OFONO_CELL_TYPE_LTE;
++	c2 = c1;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.lte.mcc++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	c2 = c1; c2.info.lte.mnc++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	c2 = c1; c2.info.lte.ci++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	c2 = c1; c2.info.lte.pci++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	c2 = c1; c2.info.lte.tac++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	/* Other attributes are not being compared */
++	c2 = c1; c2.info.lte.earfcn++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.lte.signalStrength++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.lte.rsrp++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.lte.rsrq++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.lte.rssnr++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.lte.cqi++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.lte.timingAdvance++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++
++	/* NR */
++	c1.type = OFONO_CELL_TYPE_NR;
++	c2 = c1;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.nr.mcc++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	c2 = c1; c2.info.nr.mnc++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	c2 = c1; c2.info.nr.nci++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	c2 = c1; c2.info.nr.pci++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	c2 = c1; c2.info.nr.tac++;
++	g_assert(ofono_cell_compare_location(&c1, &c2) < 0);
++	/* Other attributes are not being compared */
++	c2 = c1; c2.info.nr.nrarfcn++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.nr.ssRsrp++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.nr.ssRsrq++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.nr.ssSinr++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.nr.csiRsrp++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.nr.csiRsrq++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	c2 = c1; c2.info.nr.csiSinr++;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++	/* Unknown type */
++	c1.type = c2.type = (enum ofono_cell_type)-1;
++	g_assert(!ofono_cell_compare_location(&c1, &c2));
++}
++
++#define TEST_(name) "/cell-info/" name
++
++int main(int argc, char *argv[])
++{
++	g_test_init(&argc, &argv, NULL);
++
++	gutil_log_timestamp = FALSE;
++	gutil_log_default.level = g_test_verbose() ?
++		GLOG_LEVEL_VERBOSE : GLOG_LEVEL_NONE;
++	__ofono_log_init("test-cell-info",
++				g_test_verbose() ? "*" : NULL,
++				FALSE);
++
++	g_test_add_func(TEST_("basic"), test_basic);
++	g_test_add_func(TEST_("compare"), test_compare);
++
++	return g_test_run();
++}
++
++/*
++ * Local Variables:
++ * mode: C
++ * c-basic-offset: 8
++ * indent-tabs-mode: t
++ * End:
++ */
