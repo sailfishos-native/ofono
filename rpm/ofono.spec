@@ -83,6 +83,7 @@ autoreconf --force --install
 
 %configure --disable-static \
     --enable-test \
+    --enable-sailfish-slot \
     --enable-sailfish-bt \
     --enable-sailfish-pushforwarder \
     --enable-sailfish-access \
