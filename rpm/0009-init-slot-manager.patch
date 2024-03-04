@@ -1,0 +1,42 @@
+diff --git a/src/main.c b/src/main.c
+index 82157700..8880851d 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -277,6 +277,9 @@ int main(int argc, char **argv)
+ 	if (__ofono_modules_init() < 0)
+ 		goto fail_module_init;
+ 
++	__ofono_slot_manager_init();
++
++
+ 	__ofono_plugin_init(option_plugin, option_noplugin);
+ 	g_free(option_plugin);
+ 	g_free(option_noplugin);
+@@ -285,6 +288,8 @@ int main(int argc, char **argv)
+ 
+ 	__ofono_plugin_cleanup();
+ 
++	__ofono_slot_manager_cleanup();
++
+ 	__ofono_modules_cleanup();
+ 
+ fail_module_init:
+diff --git a/src/ofono.h b/src/ofono.h
+index ad863738..b08f50da 100644
+--- a/src/ofono.h
++++ b/src/ofono.h
+@@ -614,6 +614,14 @@ void __ofono_private_network_release(int id);
+ ofono_bool_t __ofono_private_network_request(ofono_private_network_cb_t cb,
+ 						int *id, void *data);
+ 
++
++#include <ofono/dbus-access.h>
++#include <ofono/slot.h>
++
++void __ofono_slot_manager_init(void);
++void __ofono_slot_manager_cleanup(void);
++
++
+ #include <ofono/cell-info.h>
+ #include <ofono/dbus-access.h>
+ #include <ofono/netmon.h>
