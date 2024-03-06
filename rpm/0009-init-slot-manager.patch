@@ -1,26 +1,22 @@
-diff --git a/src/main.c b/src/main.c
-index 82157700..8880851d 100644
---- a/src/main.c
-+++ b/src/main.c
-@@ -277,6 +277,9 @@ int main(int argc, char **argv)
- 	if (__ofono_modules_init() < 0)
- 		goto fail_module_init;
+commit 70ca71ffa2a290d6e3aec115c05184f2be852211
+Author: Adam Pigg <adam@piggz.co.uk>
+Date:   Mon Mar 4 23:03:12 2024 +0000
+
+    Move the slot manager to hte module api
+
+diff --git a/src/manager.c b/src/manager.c
+index e3307adb..db2ab283 100644
+--- a/src/manager.c
++++ b/src/manager.c
+@@ -100,6 +100,8 @@ static int manager_init(void)
+ 	DBusConnection *conn = ofono_dbus_get_connection();
+ 	gboolean ret;
  
-+	__ofono_slot_manager_init();
++	DBG("manager_init");
 +
-+
- 	__ofono_plugin_init(option_plugin, option_noplugin);
- 	g_free(option_plugin);
- 	g_free(option_noplugin);
-@@ -285,6 +288,8 @@ int main(int argc, char **argv)
- 
- 	__ofono_plugin_cleanup();
- 
-+	__ofono_slot_manager_cleanup();
-+
- 	__ofono_modules_cleanup();
- 
- fail_module_init:
+ 	ret = g_dbus_register_interface(conn, OFONO_MANAGER_PATH,
+ 					OFONO_MANAGER_INTERFACE,
+ 					manager_methods, manager_signals,
 diff --git a/src/ofono.h b/src/ofono.h
 index ad863738..b08f50da 100644
 --- a/src/ofono.h
@@ -40,3 +36,37 @@ index ad863738..b08f50da 100644
  #include <ofono/cell-info.h>
  #include <ofono/dbus-access.h>
  #include <ofono/netmon.h>
+diff --git a/src/slot-manager.c b/src/slot-manager.c
+index c0e5088b..5bcfafbd 100644
+--- a/src/slot-manager.c
++++ b/src/slot-manager.c
+@@ -1477,7 +1477,7 @@ static void ofono_slot_manager_object_class_init(OfonoSlotManagerObjectClass *c)
+ 
+ static OfonoSlotManagerObject *slot_manager = NULL;
+ 
+-void __ofono_slot_manager_init(void)
++int slot_manager_init(void)
+ {
+ 	/*
+ 	 * Let's not assume what's called first, ofono_slot_driver_register()
+@@ -1486,9 +1486,10 @@ void __ofono_slot_manager_init(void)
+ 	if (!slot_manager) {
+ 		slot_manager = ofono_slot_manager_new();
+ 	}
++	return 0;
+ }
+ 
+-void __ofono_slot_manager_cleanup(void)
++void slot_manager_cleanup(void)
+ {
+ 	if (slot_manager) {
+ 		OfonoSlotManagerObject *mgr = slot_manager;
+@@ -1507,6 +1508,8 @@ void __ofono_slot_manager_cleanup(void)
+ 	}
+ }
+ 
++OFONO_MODULE(slot_manager, slot_manager_init, slot_manager_cleanup)
++
+ /*==========================================================================*
+  * Driver registration
+  * Requires access to slot_manager variable
