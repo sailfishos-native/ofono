@@ -6,6 +6,17 @@ License:    GPLv2
 URL:        https://github.com/sailfishos/ofono
 Source:     %{name}-%{version}.tar.bz2
 
+Patch0:     0001-add-sailfish-bt-plugin.patch
+Patch1:     0002-add-debug-notify.patch
+Patch2:     0003-add-ofono-plugin-foreach.patch
+Patch3:     0004-add-dbus-client-queue-access-sailfish.patch
+Patch4:     0005-add-sailfish-pushforwarder.patch
+Patch5:     0006-add-cell-info.patch
+Patch6:     0007-add-sim-info-sf-watch.patch
+Patch7:     0008-add-slot-manager.patch
+Patch8:     0009-init-slot-manager.patch
+Patch9:     0010-add-gobi-slot-support.patch
+
 %define libglibutil_version 1.0.51
 
 # license macro requires rpm >= 4.11
