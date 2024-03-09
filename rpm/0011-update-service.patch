@@ -1,5 +1,5 @@
 diff --git a/src/ofono.service.in b/src/ofono.service.in
-index c24ac280..ee3b86b2 100644
+index c24ac280..c33c615e 100644
 --- a/src/ofono.service.in
 +++ b/src/ofono.service.in
 @@ -1,12 +1,17 @@
@@ -15,7 +15,7 @@ index c24ac280..ee3b86b2 100644
 -ExecStart=@prefix@/sbin/ofonod -n
 +User=root
 +EnvironmentFile=-/var/lib/environment/ofono/*.conf
-+ExecStart=@prefix@/sbin/ofonod -n --nobacktrace $OFONO_ARGS $OFONO_DEBUG
++ExecStart=@prefix@/sbin/ofonod -n $OFONO_ARGS $OFONO_DEBUG
  StandardError=null
 +Restart=always
 +RestartSec=3
