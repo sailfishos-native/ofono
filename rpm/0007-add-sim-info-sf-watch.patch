@@ -2216,6 +2216,44 @@ index 1873eccc..b69702a6 100644
  
  	GSList *own_numbers;
  	GSList *new_numbers;
+@@ -1835,6 +1835,7 @@ static void sim_imsi_obtained(struct ofono_sim *sim, const char *imsi)
+                                                DBUS_TYPE_STRING, &str);
+        }
+
++       imsi_watches_notify(sim);
+        sim_set_ready(sim);
+
+ }
+@@ -2391,6 +2392,7 @@ static void sim_iccid_read_cb(int ok, int length, int record,
+                                                "CardIdentifier",
+                                                DBUS_TYPE_STRING,
+                                                &sim->iccid);
++       iccid_watches_notify(sim);
+ }
+
+ static void sim_iccid_changed(int id, void *userdata)
+@@ -3354,6 +3356,11 @@ static void sim_unregister(struct ofono_atom *atom)
+
+        __ofono_modem_remove_atom_watch(modem, sim->hfp_watch);
+
++       __ofono_watchlist_free(sim->iccid_watches);
++       sim->iccid_watches = NULL;
++       __ofono_watchlist_free(sim->imsi_watches);
++       sim->imsi_watches = NULL;
++
+        __ofono_watchlist_free(sim->state_watches);
+        sim->state_watches = NULL;
+        __ofono_watchlist_free(sim->spn_watches);
+@@ -3461,6 +3468,8 @@ void ofono_sim_register(struct ofono_sim *sim)
+        }
+
+        ofono_modem_add_interface(modem, OFONO_SIM_MANAGER_INTERFACE);
++       sim->iccid_watches = __ofono_watchlist_new(g_free);
++       sim->imsi_watches = __ofono_watchlist_new(g_free);
+        sim->state_watches = __ofono_watchlist_new(g_free);
+        sim->spn_watches = __ofono_watchlist_new(g_free);
+        sim->simfs = sim_fs_new(sim, sim->driver);
+
 @@ -378,6 +380,94 @@ static void call_state_watches(struct ofono_sim *sim)
  	}
  }
