@@ -14,7 +14,9 @@ index 4134c62d..79143a28 100644
  #define GOBI_VOICE	(1 << 9)
  #define GOBI_WDA	(1 << 10)
  
-+static char *imei = "123456789012345";
++#define IMEI_LEN 16
++
++static char imei[IMEI_LEN] = "1234567890123456";
 +
 +typedef struct ofono_slot_driver_data {
 +	struct ofono_slot_manager *slot_manager;
@@ -27,7 +29,7 @@ index 4134c62d..79143a28 100644
 +	struct ofono_slot *handle;
 +	struct ofono_modem *modem;
 +	GobiPlugin *plugin;
-+	char *imei;
++	char imei[IMEI_LEN];
 +} GobiSlot;
 +
 +static struct ofono_modem *global_modem = NULL;
@@ -64,10 +66,11 @@ index 4134c62d..79143a28 100644
 +			return;
 +		} else {
 +			ofono_info("Got IMEI %s", str);
-+			imei = str;
++			l_strlcpy(imei, str, sizeof(imei));
 +			gobi_slot_driver_startup_check();
 +		}
 +	}
++   qmi_free(str);
 +}
 +
  static int gobi_probe(struct ofono_modem *modem)
@@ -164,7 +167,7 @@ index 4134c62d..79143a28 100644
 +	}
 +
 +	GobiSlot *slot = NULL;
-+	slot = (GobiSlot *)g_slist_nth(global_plugin->slots, 0);
++	slot = (GobiSlot *)g_slist_nth_data(global_plugin->slots, 0);
 +
 +	if (!slot) {
 +		DBG("No slot yet");
@@ -205,7 +208,7 @@ index 4134c62d..79143a28 100644
 +	}
 +
 +	GobiSlot *slot = NULL;
-+	slot = (GobiSlot *)g_slist_nth(global_plugin->slots, 0);
++	slot = (GobiSlot *)g_slist_nth_data(global_plugin->slots, 0);
 +
 +	if (!slot) {
 +		DBG("No slot yet");
@@ -215,7 +218,7 @@ index 4134c62d..79143a28 100644
 +	if (!slot->modem) {
 +		slot->modem = global_modem;
 +	}
-+	slot->imei = imei;
++	l_strlcpy(slot->imei, imei, sizeof(slot->imei) );
 +
 +	slot->handle = ofono_slot_add(global_plugin->slot_manager,
 +				"/quectelqmi_0", (OFONO_RADIO_ACCESS_MODE_GSM | OFONO_RADIO_ACCESS_MODE_UMTS | OFONO_RADIO_ACCESS_MODE_LTE),
