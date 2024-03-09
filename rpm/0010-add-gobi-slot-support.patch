@@ -10,7 +10,7 @@ index 4134c62d..79143a28 100644
  
  #include <ell/ell.h>
  
-@@ -72,10 +73,34 @@
+@@ -72,10 +73,36 @@
  #define GOBI_VOICE	(1 << 9)
  #define GOBI_WDA	(1 << 10)
  
@@ -47,7 +47,7 @@ index 4134c62d..79143a28 100644
  	unsigned long features;
  	unsigned int discover_attempts;
  	uint8_t oper_mode;
-@@ -94,6 +119,27 @@ static void gobi_debug(const char *str, void *user_data)
+@@ -94,6 +119,28 @@ static void gobi_debug(const char *str, void *user_data)
  	ofono_info("%s%s", prefix, str);
  }
  
