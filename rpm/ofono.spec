@@ -74,7 +74,7 @@ Requires:  %{name} = %{version}-%{release}
 Man pages for %{name}.
 
 %prep
-%setup -q -n %{name}-%{version}/upstream
+%autosetup -p1 -n %{name}-%{version}/upstream
 
 ./bootstrap
 
@@ -91,7 +91,8 @@ autoreconf --force --install
     --disable-isimodem \
     --enable-qmimodem \
     --with-systemdunitdir=%{_unitdir} \
-    --enable-external-ell
+    --enable-external-ell \
+    --enable-debug=yes
 
 make %{_smp_mflags}
 
@@ -100,6 +101,7 @@ make %{_smp_mflags}
 make check
 
 %install
+export DONT_STRIP=1
 rm -rf %{buildroot}
 %make_install
 
