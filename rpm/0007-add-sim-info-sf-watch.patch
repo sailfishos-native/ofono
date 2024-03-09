@@ -33,7 +33,7 @@ index 08d7f1c2..1ea66f9e 100644
  			@GLIB_LIBS@ @DBUS_LIBS@ -ldl
  
 diff --git a/configure.ac b/configure.ac
-index ce5458eb..df4fb16a 100644
+index b2851deb..a54928f2 100644
 --- a/configure.ac
 +++ b/configure.ac
 @@ -270,6 +270,12 @@ AC_ARG_ENABLE(sailfish-bt, AS_HELP_STRING([--enable-sailfish-bt],
@@ -262,10 +262,10 @@ index 11950a91..68a52546 100644
  enum ofono_clir_option {
  	OFONO_CLIR_OPTION_DEFAULT = 0,
 diff --git a/src/network.c b/src/network.c
-index 17cff783..878a6b51 100644
+index 886e5bf0..8f71dacf 100644
 --- a/src/network.c
 +++ b/src/network.c
-@@ -2088,3 +2088,31 @@ void *ofono_netreg_get_data(struct ofono_netreg *netreg)
+@@ -2077,3 +2077,31 @@ void *ofono_netreg_get_data(struct ofono_netreg *netreg)
  {
  	return netreg->driver_data;
  }
@@ -2197,7 +2197,7 @@ index 00000000..38a80619
 + * End:
 + */
 diff --git a/src/sim.c b/src/sim.c
-index 1873eccc..b69702a6 100644
+index 8a97e876..06d025f1 100644
 --- a/src/sim.c
 +++ b/src/sim.c
 @@ -72,6 +72,7 @@ struct ofono_sim_aid_session {
@@ -2216,136 +2216,41 @@ index 1873eccc..b69702a6 100644
  
  	GSList *own_numbers;
  	GSList *new_numbers;
-@@ -1835,6 +1835,7 @@ static void sim_imsi_obtained(struct ofono_sim *sim, const char *imsi)
-                                                DBUS_TYPE_STRING, &str);
-        }
-
-+       imsi_watches_notify(sim);
-        sim_set_ready(sim);
-
- }
-@@ -2391,6 +2392,7 @@ static void sim_iccid_read_cb(int ok, int length, int record,
-                                                "CardIdentifier",
-                                                DBUS_TYPE_STRING,
-                                                &sim->iccid);
-+       iccid_watches_notify(sim);
- }
-
- static void sim_iccid_changed(int id, void *userdata)
-@@ -3354,6 +3356,11 @@ static void sim_unregister(struct ofono_atom *atom)
-
-        __ofono_modem_remove_atom_watch(modem, sim->hfp_watch);
-
-+       __ofono_watchlist_free(sim->iccid_watches);
-+       sim->iccid_watches = NULL;
-+       __ofono_watchlist_free(sim->imsi_watches);
-+       sim->imsi_watches = NULL;
-+
-        __ofono_watchlist_free(sim->state_watches);
-        sim->state_watches = NULL;
-        __ofono_watchlist_free(sim->spn_watches);
-@@ -3461,6 +3468,8 @@ void ofono_sim_register(struct ofono_sim *sim)
-        }
-
-        ofono_modem_add_interface(modem, OFONO_SIM_MANAGER_INTERFACE);
-+       sim->iccid_watches = __ofono_watchlist_new(g_free);
-+       sim->imsi_watches = __ofono_watchlist_new(g_free);
-        sim->state_watches = __ofono_watchlist_new(g_free);
-        sim->spn_watches = __ofono_watchlist_new(g_free);
-        sim->simfs = sim_fs_new(sim, sim->driver);
-
-@@ -378,6 +380,94 @@ static void call_state_watches(struct ofono_sim *sim)
+@@ -1742,6 +1744,7 @@ static void sim_imsi_obtained(struct ofono_sim *sim, const char *imsi)
+ 						DBUS_TYPE_STRING, &str);
  	}
+ 
++	imsi_watches_notify(sim);
+ 	sim_set_ready(sim);
+ 
+ }
+@@ -2298,6 +2301,8 @@ static void sim_iccid_read_cb(int ok, int length, int record,
+ 						"CardIdentifier",
+ 						DBUS_TYPE_STRING,
+ 						&sim->iccid);
++
++	iccid_watches_notify(sim);
  }
  
-+static unsigned int add_watch_item(struct ofono_watchlist *watchlist,
-+					void *notify, void *notify_data,
-+					ofono_destroy_func destroy)
-+{
-+	struct ofono_watchlist_item *item;
+ static void sim_iccid_changed(int id, void *userdata)
+@@ -3260,6 +3265,11 @@ static void sim_unregister(struct ofono_atom *atom)
+ 
+ 	__ofono_modem_remove_atom_watch(modem, sim->hfp_watch);
+ 
++	__ofono_watchlist_free(sim->iccid_watches);
++    sim->iccid_watches = NULL;
++    __ofono_watchlist_free(sim->imsi_watches);
++    sim->imsi_watches = NULL;
 +
-+	item = g_new0(struct ofono_watchlist_item, 1);
-+	item->notify = notify;
-+	item->notify_data = notify_data;
-+	item->destroy = destroy;
-+
-+	return __ofono_watchlist_add_item(watchlist, item);
-+}
-+
-+static void iccid_watch_cb(gpointer data, gpointer user_data)
-+{
-+	struct ofono_watchlist_item *item = data;
-+	struct ofono_sim *sim = user_data;
-+	ofono_sim_iccid_event_cb_t cb = item->notify;
-+
-+	cb(sim->iccid, item->notify_data);
-+}
-+
-+static inline void iccid_watches_notify(struct ofono_sim *sim)
-+{
-+	g_slist_foreach(sim->iccid_watches->items, iccid_watch_cb, sim);
-+}
-+
-+unsigned int ofono_sim_add_iccid_watch(struct ofono_sim *sim,
-+				ofono_sim_iccid_event_cb_t cb, void *data,
-+				ofono_destroy_func destroy)
-+{
-+	unsigned int watch_id;
-+
-+	DBG("%p", sim);
-+	if (sim == NULL)
-+		return 0;
-+
-+	watch_id = add_watch_item(sim->iccid_watches, cb, data, destroy);
-+
-+	if (sim->iccid)
-+		cb(sim->iccid, data);
-+
-+	return watch_id;
-+}
-+
-+void ofono_sim_remove_iccid_watch(struct ofono_sim *sim, unsigned int id)
-+{
-+	__ofono_watchlist_remove_item(sim->iccid_watches, id);
-+}
-+
-+static void imsi_watch_cb(gpointer data, gpointer user_data)
-+{
-+	struct ofono_watchlist_item *item = data;
-+	struct ofono_sim *sim = user_data;
-+	ofono_sim_imsi_event_cb_t cb = item->notify;
-+
-+	cb(sim->imsi, item->notify_data);
-+}
-+
-+static inline void imsi_watches_notify(struct ofono_sim *sim)
-+{
-+	g_slist_foreach(sim->imsi_watches->items, imsi_watch_cb, sim);
-+}
-+
-+unsigned int ofono_sim_add_imsi_watch(struct ofono_sim *sim,
-+				ofono_sim_imsi_event_cb_t cb, void *data,
-+				ofono_destroy_func destroy)
-+{
-+	unsigned int watch_id;
-+
-+	DBG("%p", sim);
-+	if (sim == NULL)
-+		return 0;
-+
-+	watch_id = add_watch_item(sim->imsi_watches, cb, data, destroy);
-+
-+	if (sim->imsi)
-+		cb(sim->imsi, data);
-+
-+	return watch_id;
-+}
-+
-+void ofono_sim_remove_imsi_watch(struct ofono_sim *sim, unsigned int id)
-+{
-+	__ofono_watchlist_remove_item(sim->imsi_watches, id);
-+}
-+
- static DBusMessage *sim_get_properties(DBusConnection *conn,
- 					DBusMessage *msg, void *data)
- {
+ 	__ofono_watchlist_free(sim->state_watches);
+ 	sim->state_watches = NULL;
+ 	__ofono_watchlist_free(sim->spn_watches);
+@@ -3367,6 +3377,8 @@ void ofono_sim_register(struct ofono_sim *sim)
+ 	}
+ 
+ 	ofono_modem_add_interface(modem, OFONO_SIM_MANAGER_INTERFACE);
++	sim->iccid_watches = __ofono_watchlist_new(g_free);
++    sim->imsi_watches = __ofono_watchlist_new(g_free);
+ 	sim->state_watches = __ofono_watchlist_new(g_free);
+ 	sim->spn_watches = __ofono_watchlist_new(g_free);
+ 	sim->simfs = sim_fs_new(sim, sim->driver);
