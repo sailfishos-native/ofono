@@ -1,5 +1,5 @@
 diff --git a/plugins/gobi.c b/plugins/gobi.c
-index 4134c62d..79143a28 100644
+index 99a7d556..9124e28f 100644
 --- a/plugins/gobi.c
 +++ b/plugins/gobi.c
 @@ -52,6 +52,7 @@
@@ -47,7 +47,7 @@ index 4134c62d..79143a28 100644
  	unsigned long features;
  	unsigned int discover_attempts;
  	uint8_t oper_mode;
-@@ -94,6 +119,28 @@ static void gobi_debug(const char *str, void *user_data)
+@@ -94,6 +121,28 @@ static void gobi_debug(const char *str, void *user_data)
  	ofono_info("%s%s", prefix, str);
  }
  
@@ -76,7 +76,7 @@ index 4134c62d..79143a28 100644
  static int gobi_probe(struct ofono_modem *modem)
  {
  	struct gobi_data *data;
-@@ -120,6 +166,13 @@ static int gobi_probe(struct ofono_modem *modem)
+@@ -120,6 +169,13 @@ static int gobi_probe(struct ofono_modem *modem)
  
  	ofono_modem_set_data(modem, data);
  
@@ -90,16 +90,16 @@ index 4134c62d..79143a28 100644
  	return 0;
  }
  
-@@ -147,6 +200,8 @@ static void gobi_remove(struct ofono_modem *modem)
+@@ -147,6 +203,8 @@ static void gobi_remove(struct ofono_modem *modem)
  
  	cleanup_services(data);
  
 +	ofono_slot_driver_unregister(gobi_ofono_slot_driver);
 +
- 	qmi_device_unref(data->device);
+ 	qmi_device_free(data->device);
  
  	g_free(data);
-@@ -311,6 +366,11 @@ static void get_data_format_cb(struct qmi_result *result, void *user_data)
+@@ -311,6 +369,11 @@ static void get_data_format_cb(struct qmi_result *result, void *user_data)
  	}
  
  done:
@@ -111,7 +111,7 @@ index 4134c62d..79143a28 100644
  	if (qmi_service_send(data->dms, QMI_DMS_GET_CAPS, NULL,
  						get_caps_cb, modem, NULL) > 0)
  		return;
-@@ -623,7 +683,7 @@ static void gobi_pre_sim(struct ofono_modem *modem)
+@@ -625,7 +688,7 @@ static void gobi_pre_sim(struct ofono_modem *modem)
  		sim_driver = "qmimodem_legacy";
  
  	if (sim_driver)
@@ -120,7 +120,7 @@ index 4134c62d..79143a28 100644
  
  	if (data->features & GOBI_VOICE)
  		ofono_voicecall_create(modem, 0, "qmimodem", data->device);
-@@ -631,6 +691,8 @@ static void gobi_pre_sim(struct ofono_modem *modem)
+@@ -633,6 +696,8 @@ static void gobi_pre_sim(struct ofono_modem *modem)
  	if (data->features & GOBI_PDS)
  		ofono_location_reporting_create(modem, 0, "qmimodem",
  							data->device);
@@ -129,7 +129,7 @@ index 4134c62d..79143a28 100644
  }
  
  static void gobi_setup_gprs(struct ofono_modem *modem)
-@@ -695,6 +757,7 @@ static void gobi_setup_gprs(struct ofono_modem *modem)
+@@ -697,6 +762,7 @@ static void gobi_setup_gprs(struct ofono_modem *modem)
  		ofono_gprs_add_context(gprs, gc);
  		ofono_gprs_context_set_interface(gc, interface);
  	}
@@ -137,7 +137,7 @@ index 4134c62d..79143a28 100644
  }
  
  static void gobi_post_sim(struct ofono_modem *modem)
-@@ -752,6 +815,130 @@ static void gobi_post_online(struct ofono_modem *modem)
+@@ -754,6 +820,130 @@ static void gobi_post_online(struct ofono_modem *modem)
  	}
  }
  
