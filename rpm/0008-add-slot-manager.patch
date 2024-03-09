@@ -1,5 +1,5 @@
 diff --git a/Makefile.am b/Makefile.am
-index 6ca851fe..3b9a03ed 100644
+index 6ca851fe..8f683b1a 100644
 --- a/Makefile.am
 +++ b/Makefile.am
 @@ -179,7 +179,7 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
@@ -11,7 +11,13 @@ index 6ca851fe..3b9a03ed 100644
  endif
  nodist_pkginclude_HEADERS = include/version.h
  
-@@ -706,6 +706,14 @@ src_ofonod_SOURCES = $(builtin_sources) $(gatchat_sources) src/ofono.ver \
+@@ -700,12 +700,18 @@ src_ofonod_SOURCES = $(builtin_sources) $(gatchat_sources) src/ofono.ver \
+ 			src/hfp.h src/siri.c \
+ 			src/netmon.c src/lte.c src/ims.c \
+ 			src/netmonagent.c src/netmonagent.h \
+-			src/cell-info.c src/cell-info-dbus.c \
+-			src/cell-info-control.c \
+ 			src/module.c \
  			src/provisiondb.h src/provisiondb.c \
  			src/provision.c
  
