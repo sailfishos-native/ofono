@@ -1011,7 +1011,7 @@ index 0000000000000000000000000000000000000000..778186c2fe25ac3bc5d08af2fb8902a7
 + */
 +
 +#include <ofono/dbus-clients.h>
-+#include <ofono/gdbus.h>
++#include <gdbus.h>
 +#include <ofono/log.h>
 +
 +struct ofono_dbus_client {
