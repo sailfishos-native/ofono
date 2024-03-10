@@ -1227,7 +1227,7 @@ index 0000000000000000000000000000000000000000..629d76e9d9a04b3b1a9ef4d779c88d87
 +#include "sim-info.h"
 +
 +#include <ofono/dbus.h>
-+#include <ofono/watch.h>
++#include <ofono/sailfish_watch.h>
 +
 +#include <gdbus.h>
 +
@@ -1521,7 +1521,7 @@ index 0000000000000000000000000000000000000000..71e6fb30f6051f98ac4c3d35c392c54d
 +#include <config.h>
 +#endif
 +
-+#include <ofono/watch.h>
++#include <ofono/sailfish_watch.h>
 +
 +#include <gutil_misc.h>
 +#include <gutil_log.h>
