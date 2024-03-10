@@ -1,16 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Adam Pigg <adam@piggz.co.uk>
+Date: Sun, 10 Mar 2024 12:08:28 +0000
+Subject: [PATCH 1/1] Add cell-info support
+
+Includes dbus interface and associated tests
+---
+ Makefile.am                   |   29 +-
+ configure.ac                  |    5 +
+ include/cell-info.h           |  144 ++++
+ include/dbus.h                |    2 +
+ include/types.h               |    2 +
+ src/cell-info-control.c       |  282 ++++++++
+ src/cell-info-control.h       |   52 ++
+ src/cell-info-dbus.c          |  731 ++++++++++++++++++++
+ src/cell-info-dbus.h          |   35 +
+ src/cell-info.c               |  154 +++++
+ src/ofono.h                   |    1 +
+ unit/fake_cell_info.c         |  230 +++++++
+ unit/fake_cell_info.h         |   39 ++
+ unit/test-cell-info-control.c |  204 ++++++
+ unit/test-cell-info-dbus.c    | 1195 +++++++++++++++++++++++++++++++++
+ unit/test-cell-info.c         |  288 ++++++++
+ 17 files changed, 3392 insertions(+), 1134 deletions(-)
+ create mode 100644 include/cell-info.h
+ create mode 100644 src/cell-info-control.c
+ create mode 100644 src/cell-info-control.h
+ create mode 100644 src/cell-info-dbus.c
+ create mode 100644 src/cell-info-dbus.h
+ create mode 100644 src/cell-info.c
+ create mode 100644 unit/fake_cell_info.c
+ create mode 100644 unit/fake_cell_info.h
+ create mode 100644 unit/test-cell-info-control.c
+ create mode 100644 unit/test-cell-info-dbus.c
+ create mode 100644 unit/test-cell-info.c
+
 diff --git a/Makefile.am b/Makefile.am
-index e2e8826f..08d7f1c2 100644
+index 42508382da362bc8d12f0e62f53453fc4f671bee..bad91b88516c5e4205069f3fd4ba51f000688ac9 100644
 --- a/Makefile.am
 +++ b/Makefile.am
-@@ -175,6 +175,7 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
- 			include/handsfree.h \
+@@ -176,7 +176,7 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
  			include/handsfree-audio.h include/siri.h \
  			include/netmon.h include/lte.h include/ims.h \
-+			include/cell-info.h \
- 			include/storage.h include/dbus-access.h
+ 			include/storage.h include/dbus-access.h \
+-			include/dbus-clients.h
++			include/dbus-clients.h include/cell-info.h
  
  nodist_pkginclude_HEADERS = include/version.h
-@@ -696,6 +697,8 @@ src_ofonod_SOURCES = $(builtin_sources) $(gatchat_sources) src/ofono.ver \
+ 
+@@ -697,6 +697,8 @@ src_ofonod_SOURCES = $(builtin_sources) $(gatchat_sources) src/ofono.ver \
  			src/hfp.h src/siri.c \
  			src/netmon.c src/lte.c src/ims.c \
  			src/netmonagent.c src/netmonagent.h \
@@ -19,7 +56,7 @@ index e2e8826f..08d7f1c2 100644
  			src/module.c \
  			src/provisiondb.h src/provisiondb.c \
  			src/provision.c
-@@ -887,6 +890,31 @@ unit_test_common_SOURCES = unit/test-common.c src/common.c src/util.c
+@@ -888,6 +890,31 @@ unit_test_common_SOURCES = unit/test-common.c src/common.c src/util.c
  unit_test_common_LDADD = @GLIB_LIBS@ $(ell_ldadd)
  unit_objects += $(unit_test_common_OBJECTS)
  
@@ -52,7 +89,7 @@ index e2e8826f..08d7f1c2 100644
  unit_test_util_LDADD = @GLIB_LIBS@ $(ell_ldadd)
  unit_objects += $(unit_test_utils_OBJECTS)
 diff --git a/configure.ac b/configure.ac
-index a458cca5..ce5458eb 100644
+index 8d45c21842eafec52e77ccae07ff071adb3a0c86..b2851debf8940cfae28f7bbfd0dd483abf0ee9b8 100644
 --- a/configure.ac
 +++ b/configure.ac
 @@ -137,6 +137,11 @@ PKG_CHECK_MODULES(GLIB, glib-2.0 >= 2.68, [
@@ -69,7 +106,7 @@ index a458cca5..ce5458eb 100644
  AC_SUBST(DBUS_CFLAGS)
 diff --git a/include/cell-info.h b/include/cell-info.h
 new file mode 100644
-index 00000000..f07a1108
+index 0000000000000000000000000000000000000000..f07a1108f588c598fffcf48ec3a148e419be293a
 --- /dev/null
 +++ b/include/cell-info.h
 @@ -0,0 +1,144 @@
@@ -218,7 +255,7 @@ index 00000000..f07a1108
 + * End:
 + */
 diff --git a/include/dbus.h b/include/dbus.h
-index 984a9e9b..e89fa598 100644
+index 984a9e9b5faada4a9fd2544c3e58a70c47f18ddc..e89fa59866f3302530477ac3cbf6c6588fde3cbf 100644
 --- a/include/dbus.h
 +++ b/include/dbus.h
 @@ -74,6 +74,8 @@ extern "C" {
@@ -231,7 +268,7 @@ index 984a9e9b..e89fa598 100644
  
  void ofono_dbus_dict_append(DBusMessageIter *dict, const char *key, int type,
 diff --git a/include/types.h b/include/types.h
-index bf3a89ff..11950a91 100644
+index bf3a89ff02431d71d43120bd7db8ab620a25dd0a..11950a91e99e1ff014785aad247bd4086096e43c 100644
 --- a/include/types.h
 +++ b/include/types.h
 @@ -36,6 +36,8 @@ extern "C" {
@@ -245,7 +282,7 @@ index bf3a89ff..11950a91 100644
  #define OFONO_MAX_MNC_LENGTH 3
 diff --git a/src/cell-info-control.c b/src/cell-info-control.c
 new file mode 100644
-index 00000000..99f9a593
+index 0000000000000000000000000000000000000000..99f9a59301b5dbc05186532f3001d73f8eae6264
 --- /dev/null
 +++ b/src/cell-info-control.c
 @@ -0,0 +1,282 @@
@@ -533,7 +570,7 @@ index 00000000..99f9a593
 + */
 diff --git a/src/cell-info-control.h b/src/cell-info-control.h
 new file mode 100644
-index 00000000..5b276ec8
+index 0000000000000000000000000000000000000000..5b276ec83ebc21adf9639af5d50d26d1da8a224d
 --- /dev/null
 +++ b/src/cell-info-control.h
 @@ -0,0 +1,52 @@
@@ -591,7 +628,7 @@ index 00000000..5b276ec8
 + */
 diff --git a/src/cell-info-dbus.c b/src/cell-info-dbus.c
 new file mode 100644
-index 00000000..e167ee27
+index 0000000000000000000000000000000000000000..e167ee27f7379f5535e9da7f10104165e371389a
 --- /dev/null
 +++ b/src/cell-info-dbus.c
 @@ -0,0 +1,731 @@
@@ -1328,7 +1365,7 @@ index 00000000..e167ee27
 + */
 diff --git a/src/cell-info-dbus.h b/src/cell-info-dbus.h
 new file mode 100644
-index 00000000..f1ce5028
+index 0000000000000000000000000000000000000000..f1ce5028ff27d1388e9b99b38860334bfe904c92
 --- /dev/null
 +++ b/src/cell-info-dbus.h
 @@ -0,0 +1,35 @@
@@ -1369,7 +1406,7 @@ index 00000000..f1ce5028
 + */
 diff --git a/src/cell-info.c b/src/cell-info.c
 new file mode 100644
-index 00000000..6468b0c7
+index 0000000000000000000000000000000000000000..6468b0c7f0eedd7d41ad5c60163c6adc0fb17bf5
 --- /dev/null
 +++ b/src/cell-info.c
 @@ -0,0 +1,154 @@
@@ -1528,7 +1565,7 @@ index 00000000..6468b0c7
 + * End:
 + */
 diff --git a/src/ofono.h b/src/ofono.h
-index ff7fc11a..f7e01e00 100644
+index ff7fc11a10a97614ecc874830de0af43f346cd3e..f7e01e004a00c2556607095a19d176fda30e3241 100644
 --- a/src/ofono.h
 +++ b/src/ofono.h
 @@ -614,6 +614,7 @@ void __ofono_private_network_release(int id);
@@ -1541,7 +1578,7 @@ index ff7fc11a..f7e01e00 100644
  #include <ofono/lte.h>
 diff --git a/unit/fake_cell_info.c b/unit/fake_cell_info.c
 new file mode 100644
-index 00000000..faac5c0c
+index 0000000000000000000000000000000000000000..faac5c0c1e5e94b22c837817630d3fe521a1c0ae
 --- /dev/null
 +++ b/unit/fake_cell_info.c
 @@ -0,0 +1,230 @@
@@ -1777,7 +1814,7 @@ index 00000000..faac5c0c
 + */
 diff --git a/unit/fake_cell_info.h b/unit/fake_cell_info.h
 new file mode 100644
-index 00000000..b160ea23
+index 0000000000000000000000000000000000000000..b160ea2311d15c4426b11df990f46815a8205246
 --- /dev/null
 +++ b/unit/fake_cell_info.h
 @@ -0,0 +1,39 @@
@@ -1822,7 +1859,7 @@ index 00000000..b160ea23
 + */
 diff --git a/unit/test-cell-info-control.c b/unit/test-cell-info-control.c
 new file mode 100644
-index 00000000..d6b9237a
+index 0000000000000000000000000000000000000000..d6b9237ad3e21e2d32eb34ee7d53be2e0852d823
 --- /dev/null
 +++ b/unit/test-cell-info-control.c
 @@ -0,0 +1,204 @@
@@ -2032,7 +2069,7 @@ index 00000000..d6b9237a
 + */
 diff --git a/unit/test-cell-info-dbus.c b/unit/test-cell-info-dbus.c
 new file mode 100644
-index 00000000..72f84b37
+index 0000000000000000000000000000000000000000..72f84b374968b9a906b41a776d8da09389ed79d4
 --- /dev/null
 +++ b/unit/test-cell-info-dbus.c
 @@ -0,0 +1,1195 @@
@@ -3233,7 +3270,7 @@ index 00000000..72f84b37
 + */
 diff --git a/unit/test-cell-info.c b/unit/test-cell-info.c
 new file mode 100644
-index 00000000..b039f3ab
+index 0000000000000000000000000000000000000000..b039f3ab30176768a483343e127902e43f7c9d13
 --- /dev/null
 +++ b/unit/test-cell-info.c
 @@ -0,0 +1,288 @@

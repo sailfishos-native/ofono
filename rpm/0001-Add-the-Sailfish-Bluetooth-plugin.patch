@@ -1,5 +1,17 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Adam Pigg <adam@piggz.co.uk>
+Date: Sun, 10 Mar 2024 11:24:03 +0000
+Subject: [PATCH 1/1] Add the Sailfish Bluetooth plugin
+
+---
+ Makefile.am           |   5 +
+ configure.ac          |   5 +
+ plugins/sailfish_bt.c | 389 ++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 399 insertions(+)
+ create mode 100644 plugins/sailfish_bt.c
+
 diff --git a/Makefile.am b/Makefile.am
-index 85bebae9..09c4f3f3 100644
+index 85bebae978304c81bbe504d0d6cfad3680bcd11a..09c4f3f3850f13e22e3a59f26794a84101de8f9c 100644
 --- a/Makefile.am
 +++ b/Makefile.am
 @@ -613,6 +613,11 @@ builtin_sources += plugins/bluez5.c plugins/bluez5.h
@@ -15,7 +27,7 @@ index 85bebae9..09c4f3f3 100644
  
  if UPOWER
 diff --git a/configure.ac b/configure.ac
-index 9fa6531a..240ae29f 100644
+index 19adf3698c759a63b5289ab280f186c910914236..a39e5375ae14743fe5da95dc2e06589fd3cc1866 100644
 --- a/configure.ac
 +++ b/configure.ac
 @@ -250,6 +250,11 @@ fi
@@ -32,7 +44,7 @@ index 9fa6531a..240ae29f 100644
  					[enable_upower=${enableval}])
 diff --git a/plugins/sailfish_bt.c b/plugins/sailfish_bt.c
 new file mode 100644
-index 00000000..4f8c15c0
+index 0000000000000000000000000000000000000000..4f8c15c0ed2cc3a739836efee9c1dea18960578a
 --- /dev/null
 +++ b/plugins/sailfish_bt.c
 @@ -0,0 +1,389 @@

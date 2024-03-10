@@ -1,5 +1,15 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Adam Pigg <adam@piggz.co.uk>
+Date: Sun, 10 Mar 2024 12:28:16 +0000
+Subject: [PATCH 1/1] Add sailfish arguments to the systemd unit and start
+ after dbus
+
+---
+ src/ofono.service.in | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
 diff --git a/src/ofono.service.in b/src/ofono.service.in
-index c24ac280..c33c615e 100644
+index c24ac280d84c16b2cea2358e34eda87433c38a22..c33c615eb6a8ea4bdd81acf7a03a5464882565fa 100644
 --- a/src/ofono.service.in
 +++ b/src/ofono.service.in
 @@ -1,12 +1,17 @@

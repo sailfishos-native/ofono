@@ -1,19 +1,18 @@
-commit 4cbb6b59194ebabcade91a58ab44304f28ebf4df
-Author: Slava Monich <slava.monich@jolla.com>
-Date:   Fri Sep 29 21:27:35 2017 +0300
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Adam Pigg <adam@piggz.co.uk>
+Date: Sun, 10 Mar 2024 11:33:25 +0000
+Subject: [PATCH 1/1] Add support for plugin iteration using foreach
 
-    [ofono] Added __ofono_plugin_foreach()
-    
-    Invokes a callback for each registered plugin. It's needed by debuglog
-    plugin because external plugins have __debug section of their own and
-    debuglog needs access to debug_start and debug_stop of such plugins
-    in order to enable or disable plugin logs.
+---
+ src/ofono.h      |   6 +
+ src/plugin.c     |  19 ++
+ 3 files changed, 638 insertions(+)
 
 diff --git a/src/ofono.h b/src/ofono.h
-index 66638168..9f80574c 100644
+index 294e90a37c230d31b82e4a60618c0721ab711fe2..97b69f140b174c8fdd59e76edc6d3cd4ce2ab55c 100644
 --- a/src/ofono.h
 +++ b/src/ofono.h
-@@ -104,6 +104,12 @@ void __ofono_watchlist_free(struct ofono_watchlist *watchlist);
+@@ -118,6 +118,12 @@ void __ofono_modules_cleanup(void);
  int __ofono_plugin_init(const char *pattern, const char *exclude);
  void __ofono_plugin_cleanup(void);
  
@@ -26,8 +25,9 @@ index 66638168..9f80574c 100644
  #include <ofono/modem.h>
  
  typedef void (*ofono_modem_foreach_func)(struct ofono_modem *modem,
+
 diff --git a/src/plugin.c b/src/plugin.c
-index 2c9c619a..53c3e4d2 100644
+index 924a45ecd2862875cc3e936f2afeebdf1e164964..1dfc081ab6bc7cd03c55bf3be8ce28a5382dde49 100644
 --- a/src/plugin.c
 +++ b/src/plugin.c
 @@ -99,6 +99,25 @@ static gboolean check_plugin(struct ofono_plugin_desc *desc,

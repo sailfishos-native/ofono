@@ -1,5 +1,14 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Adam Pigg <adam@piggz.co.uk>
+Date: Sun, 10 Mar 2024 12:25:57 +0000
+Subject: [PATCH 1/1] Add slot support to the gobi plugin
+
+---
+ plugins/gobi.c | 192 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 191 insertions(+), 1 deletion(-)
+
 diff --git a/plugins/gobi.c b/plugins/gobi.c
-index 99a7d556..9124e28f 100644
+index 99a7d5564ed8f52ac71d1e4db63d8877fd1b031b..9124e28ff4aa9da4e9c31af81b95390b852c83a3 100644
 --- a/plugins/gobi.c
 +++ b/plugins/gobi.c
 @@ -52,6 +52,7 @@

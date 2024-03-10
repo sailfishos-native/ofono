@@ -1,11 +1,16 @@
-commit 70ca71ffa2a290d6e3aec115c05184f2be852211
-Author: Adam Pigg <adam@piggz.co.uk>
-Date:   Mon Mar 4 23:03:12 2024 +0000
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Adam Pigg <adam@piggz.co.uk>
+Date: Sun, 10 Mar 2024 12:25:10 +0000
+Subject: [PATCH 1/1] Initialise the slot manager on startup
 
-    Move the slot manager to hte module api
+---
+ src/manager.c      | 2 ++
+ src/ofono.h        | 8 ++++++++
+ src/slot-manager.c | 7 +++++--
+ 3 files changed, 15 insertions(+), 2 deletions(-)
 
 diff --git a/src/manager.c b/src/manager.c
-index e3307adb..db2ab283 100644
+index e3307adb8790c9499a0fa1164f531a995afe966b..db2ab283c500c2b809d1b1986bb3ce45571112c5 100644
 --- a/src/manager.c
 +++ b/src/manager.c
 @@ -100,6 +100,8 @@ static int manager_init(void)
@@ -18,7 +23,7 @@ index e3307adb..db2ab283 100644
  					OFONO_MANAGER_INTERFACE,
  					manager_methods, manager_signals,
 diff --git a/src/ofono.h b/src/ofono.h
-index ad863738..b08f50da 100644
+index ad863738f4fb696e3078a39cad2528986f770c95..b08f50da94bf1740aad98a209ca75aed8b7485e6 100644
 --- a/src/ofono.h
 +++ b/src/ofono.h
 @@ -614,6 +614,14 @@ void __ofono_private_network_release(int id);
@@ -37,7 +42,7 @@ index ad863738..b08f50da 100644
  #include <ofono/dbus-access.h>
  #include <ofono/netmon.h>
 diff --git a/src/slot-manager.c b/src/slot-manager.c
-index c0e5088b..5bcfafbd 100644
+index c0e5088b9bf035ce13e1e4ba46c07472fc2b3ac5..5bcfafbd21200440983146a291270137e8357bfb 100644
 --- a/src/slot-manager.c
 +++ b/src/slot-manager.c
 @@ -1477,7 +1477,7 @@ static void ofono_slot_manager_object_class_init(OfonoSlotManagerObjectClass *c)

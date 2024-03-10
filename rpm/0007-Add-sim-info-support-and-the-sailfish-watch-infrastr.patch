@@ -1,10 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Adam Pigg <adam@piggz.co.uk>
+Date: Sun, 10 Mar 2024 12:19:10 +0000
+Subject: [PATCH 1/1] Add sim info support and the sailfish-watch infrastrcture
+
+---
+ Makefile.am              |   3 +
+ configure.ac             |   6 +
+ include/netreg.h         |  21 +
+ include/sailfish_watch.h | 110 +++++
+ include/sim.h            |  16 +
+ include/types.h          |  19 +
+ include/types.h.orig     | 147 +++++++
+ src/network.c            |  28 ++
+ src/sailfish_watch.c     | 895 +++++++++++++++++++++++++++++++++++++++
+ src/sim-info-dbus.c      | 285 +++++++++++++
+ src/sim-info.c           | 623 +++++++++++++++++++++++++++
+ src/sim-info.h           |  72 ++++
+ src/sim.c                | 100 +++++
+ 13 files changed, 2325 insertions(+)
+ create mode 100644 include/sailfish_watch.h
+ create mode 100644 include/types.h.orig
+ create mode 100644 src/sailfish_watch.c
+ create mode 100644 src/sim-info-dbus.c
+ create mode 100644 src/sim-info.c
+ create mode 100644 src/sim-info.h
+
 diff --git a/Makefile.am b/Makefile.am
-index 85bebae9..f271ab27 100644
+index bad91b88516c5e4205069f3fd4ba51f000688ac9..cf13de97ea24a5dd7fda5918a8798b3ed6681ad3 100644
 --- a/Makefile.am
 +++ b/Makefile.am
-@@ -177,6 +177,9 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
- 			include/netmon.h include/lte.h include/ims.h \
- 			include/storage.h
+@@ -178,6 +178,9 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
+ 			include/storage.h include/dbus-access.h \
+ 			include/dbus-clients.h include/cell-info.h
  
 +if SAILFISH_SLOT
 +pkginclude_HEADERS +=    include/sailfish_watch.h
@@ -13,12 +40,12 @@ index 85bebae9..f271ab27 100644
  
  local_headers = $(foreach file,$(pkginclude_HEADERS) \
 diff --git a/configure.ac b/configure.ac
-index 19adf369..c703e2e8 100644
+index b2851debf8940cfae28f7bbfd0dd483abf0ee9b8..a54928f20764af7f23fdbd8a70d415465b74b523 100644
 --- a/configure.ac
 +++ b/configure.ac
-@@ -250,6 +250,12 @@ fi
- AM_CONDITIONAL(BLUEZ4, test "${enable_bluetooth}" != "no" && test "${enable_bluez4}" = "yes")
- AM_CONDITIONAL(BLUETOOTH, test "${enable_bluetooth}" != "no")
+@@ -270,6 +270,12 @@ AC_ARG_ENABLE(sailfish-bt, AS_HELP_STRING([--enable-sailfish-bt],
+ 					[enable_sailfish_bt=${enableval}])
+ AM_CONDITIONAL(SAILFISH_BT, test "${enable_sailfish_bt}" = "yes")
  
 +
 +AC_ARG_ENABLE(sailfish-slot, AS_HELP_STRING([--enable-sailfish-slot],
@@ -30,7 +57,7 @@ index 19adf369..c703e2e8 100644
  			[disable UPower plugin]),
  					[enable_upower=${enableval}])
 diff --git a/include/netreg.h b/include/netreg.h
-index 5cd1045f..7aa3b677 100644
+index 5cd1045f4ea61faefdd22f7dfa76126217228108..7aa3b677095c798697688dad1c7dec27e331086d 100644
 --- a/include/netreg.h
 +++ b/include/netreg.h
 @@ -30,6 +30,20 @@ extern "C" {
@@ -70,7 +97,7 @@ index 5cd1045f..7aa3b677 100644
  #endif
 diff --git a/include/sailfish_watch.h b/include/sailfish_watch.h
 new file mode 100644
-index 00000000..02e4cfd1
+index 0000000000000000000000000000000000000000..02e4cfd1544be26c88efd344ecc3c1182287a4d7
 --- /dev/null
 +++ b/include/sailfish_watch.h
 @@ -0,0 +1,110 @@
@@ -185,7 +212,7 @@ index 00000000..02e4cfd1
 + * End:
 + */
 diff --git a/include/sim.h b/include/sim.h
-index 14039822..89e7655b 100644
+index 1403982206fc1dde8b14df45b4fb0c1085859fba..89e7655b7ee70ffc3d61ac8086ae71b5f4fcb680 100644
 --- a/include/sim.h
 +++ b/include/sim.h
 @@ -252,6 +252,22 @@ ofono_bool_t ofono_sim_add_spn_watch(struct ofono_sim *sim, unsigned int *id,
@@ -212,10 +239,10 @@ index 14039822..89e7655b 100644
   * It is assumed that when ofono_sim_inserted_notify is called, the SIM is
   * ready to be queried for files that are always available even if SIM
 diff --git a/include/types.h b/include/types.h
-index bf3a89ff..8ad763a7 100644
+index 11950a91e99e1ff014785aad247bd4086096e43c..68a525460661129d6085738771b78c898b1a1fb7 100644
 --- a/include/types.h
 +++ b/include/types.h
-@@ -42,6 +42,25 @@ typedef int		ofono_bool_t;
+@@ -44,6 +44,25 @@ struct ofono_modem;
  
  typedef void (*ofono_destroy_func)(void *data);
  
@@ -241,8 +268,161 @@ index bf3a89ff..8ad763a7 100644
  /* 27.007 Section 6.2 */
  enum ofono_clir_option {
  	OFONO_CLIR_OPTION_DEFAULT = 0,
+diff --git a/include/types.h.orig b/include/types.h.orig
+new file mode 100644
+index 0000000000000000000000000000000000000000..11950a91e99e1ff014785aad247bd4086096e43c
+--- /dev/null
++++ b/include/types.h.orig
+@@ -0,0 +1,147 @@
++/*
++ *
++ *  oFono - Open Source Telephony
++ *
++ *  Copyright (C) 2008-2011  Intel Corporation. All rights reserved.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License version 2 as
++ *  published by the Free Software Foundation.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
++ *
++ */
++
++#ifndef __OFONO_TYPES_H
++#define __OFONO_TYPES_H
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#ifndef	FALSE
++#define	FALSE	(0)
++#endif
++
++#ifndef	TRUE
++#define	TRUE	(!FALSE)
++#endif
++
++typedef int		ofono_bool_t;
++
++struct ofono_modem;
++
++/* MCC is always three digits. MNC is either two or three digits */
++#define OFONO_MAX_MCC_LENGTH 3
++#define OFONO_MAX_MNC_LENGTH 3
++
++typedef void (*ofono_destroy_func)(void *data);
++
++/* 27.007 Section 6.2 */
++enum ofono_clir_option {
++	OFONO_CLIR_OPTION_DEFAULT = 0,
++	OFONO_CLIR_OPTION_INVOCATION,
++	OFONO_CLIR_OPTION_SUPPRESSION,
++};
++
++enum ofono_error_type {
++	OFONO_ERROR_TYPE_NO_ERROR = 0,
++	OFONO_ERROR_TYPE_CME,
++	OFONO_ERROR_TYPE_CMS,
++	OFONO_ERROR_TYPE_CEER,
++	OFONO_ERROR_TYPE_SIM,
++	OFONO_ERROR_TYPE_FAILURE,
++	OFONO_ERROR_TYPE_ERRNO
++};
++
++enum ofono_disconnect_reason {
++	OFONO_DISCONNECT_REASON_UNKNOWN = 0,
++	OFONO_DISCONNECT_REASON_LOCAL_HANGUP,
++	OFONO_DISCONNECT_REASON_REMOTE_HANGUP,
++	OFONO_DISCONNECT_REASON_ERROR,
++};
++
++struct ofono_error {
++	enum ofono_error_type type;
++	int error;
++};
++
++#define OFONO_MAX_PHONE_NUMBER_LENGTH 80
++#define OFONO_MAX_CALLER_NAME_LENGTH 80
++
++/* Number types, 3GPP TS 24.008 subclause 10.5.4.7, octect 3 */
++/* Unknown, ISDN numbering plan */
++#define OFONO_NUMBER_TYPE_UNKNOWN 129
++/* International, ISDN numbering plan */
++#define OFONO_NUMBER_TYPE_INTERNATIONAL 145
++
++struct ofono_phone_number {
++	char number[OFONO_MAX_PHONE_NUMBER_LENGTH + 1];
++	int type;
++};
++
++struct ofono_call {
++	unsigned int id;
++	int type;
++	int direction;
++	int status;
++	struct ofono_phone_number phone_number;
++	struct ofono_phone_number called_number;
++	char name[OFONO_MAX_CALLER_NAME_LENGTH + 1];
++	int clip_validity;
++	int cnap_validity;
++};
++
++struct ofono_network_time {
++	int sec;	/* Seconds [0..59], -1 if unavailable */
++	int min;	/* Minutes [0..59], -1 if unavailable */
++	int hour;	/* Hours [0..23], -1 if unavailable */
++	int mday;	/* Day of month [1..31], -1 if unavailable */
++	int mon;	/* Month [1..12], -1 if unavailable */
++	int year;	/* Current year, -1 if unavailable */
++	int dst;	/* Current adjustment, in hours */
++	int utcoff;	/* Offset from UTC in seconds */
++};
++
++#define OFONO_SHA1_UUID_LEN 20
++
++struct ofono_uuid {
++	unsigned char uuid[OFONO_SHA1_UUID_LEN];
++};
++
++/*
++ * ETSI 123.003, Section 9.1:
++ * the APN has, after encoding as defined in the paragraph below, a maximum
++ * length of 100 octets
++ */
++#define OFONO_GPRS_MAX_APN_LENGTH 100
++#define OFONO_GPRS_MAX_USERNAME_LENGTH 63
++#define OFONO_GPRS_MAX_PASSWORD_LENGTH 255
++
++enum ofono_gprs_proto {
++	OFONO_GPRS_PROTO_IP = 0,
++	OFONO_GPRS_PROTO_IPV6,
++	OFONO_GPRS_PROTO_IPV4V6,
++};
++
++enum ofono_gprs_auth_method {
++	OFONO_GPRS_AUTH_METHOD_CHAP = 0,
++	OFONO_GPRS_AUTH_METHOD_PAP,
++	OFONO_GPRS_AUTH_METHOD_NONE,
++};
++
++const char *ofono_uuid_to_str(const struct ofono_uuid *uuid);
++void ofono_call_init(struct ofono_call *call);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* __OFONO_TYPES_H */
 diff --git a/src/network.c b/src/network.c
-index 886e5bf0..8f71dacf 100644
+index 886e5bf0f9a3ddfdf8f795b231887b1706215b26..8f71dacff9a34ef93245b538db40a2500ddcc4a2 100644
 --- a/src/network.c
 +++ b/src/network.c
 @@ -2077,3 +2077,31 @@ void *ofono_netreg_get_data(struct ofono_netreg *netreg)
@@ -279,7 +459,7 @@ index 886e5bf0..8f71dacf 100644
 +}
 diff --git a/src/sailfish_watch.c b/src/sailfish_watch.c
 new file mode 100644
-index 00000000..ccdd21d2
+index 0000000000000000000000000000000000000000..ccdd21d21ed29cbb1846df78b986154e43295a8e
 --- /dev/null
 +++ b/src/sailfish_watch.c
 @@ -0,0 +1,895 @@
@@ -1180,7 +1360,7 @@ index 00000000..ccdd21d2
 + */
 diff --git a/src/sim-info-dbus.c b/src/sim-info-dbus.c
 new file mode 100644
-index 00000000..629d76e9
+index 0000000000000000000000000000000000000000..629d76e9d9a04b3b1a9ef4d779c88d87d1844c12
 --- /dev/null
 +++ b/src/sim-info-dbus.c
 @@ -0,0 +1,285 @@
@@ -1471,7 +1651,7 @@ index 00000000..629d76e9
 + */
 diff --git a/src/sim-info.c b/src/sim-info.c
 new file mode 100644
-index 00000000..71e6fb30
+index 0000000000000000000000000000000000000000..71e6fb30f6051f98ac4c3d35c392c54d727c9e4e
 --- /dev/null
 +++ b/src/sim-info.c
 @@ -0,0 +1,623 @@
@@ -2100,7 +2280,7 @@ index 00000000..71e6fb30
 + */
 diff --git a/src/sim-info.h b/src/sim-info.h
 new file mode 100644
-index 00000000..38a80619
+index 0000000000000000000000000000000000000000..38a80619df8362422c6c69495762953ef0a56750
 --- /dev/null
 +++ b/src/sim-info.h
 @@ -0,0 +1,72 @@
@@ -2177,7 +2357,7 @@ index 00000000..38a80619
 + * End:
 + */
 diff --git a/src/sim.c b/src/sim.c
-index 8a97e876..2f2cea7d 100644
+index 8a97e87612d966309bc9996019ff11b8b0bfc3a0..2f2cea7d72d622f4f4a9abf92d6aece2953c7657 100644
 --- a/src/sim.c
 +++ b/src/sim.c
 @@ -72,6 +72,7 @@ struct ofono_sim_aid_session {

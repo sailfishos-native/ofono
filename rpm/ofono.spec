@@ -6,16 +6,17 @@ License:    GPLv2
 URL:        https://github.com/sailfishos/ofono
 Source:     %{name}-%{version}.tar.bz2
 
-Patch0:     0001-add-sailfish-bt-plugin.patch
-Patch1:     0002-add-debug-notify.patch
-Patch2:     0003-add-ofono-plugin-foreach.patch
-Patch3:     0004-add-dbus-client-queue-access-sailfish.patch
-Patch4:     0005-add-sailfish-pushforwarder.patch
-Patch5:     0006-add-cell-info.patch
-Patch6:     0007-add-sim-info-sf-watch.patch
-Patch7:     0008-add-slot-manager.patch
-Patch8:     0009-init-slot-manager.patch
-Patch9:     0010-add-gobi-slot-support.patch
+Patch0:     0001-Add-the-Sailfish-Bluetooth-plugin.patch
+Patch1:     0002-Add-support-for-debug-notifications.patch
+Patch2:     0003-Add-the-sailfish-access-plugin-and-required-infrastr.patch
+Patch3:     0004-Add-cell-info-support.patch
+Patch4:     0005-Add-sailfish-pushforwarder-plugin.patch
+Patch5:     0006-Add-support-for-plugin-iteration-using-foreach.patch
+Patch6:     0007-Add-sim-info-support-and-the-sailfish-watch-infrastr.patch
+Patch7:     0008-Add-the-sailfish-slot-manager-and-dbus-interface.patch
+Patch8:     0009-Initialise-the-slot-manager-on-startup.patch
+Patch9:     0010-Add-slot-support-to-the-gobi-plugin.patch
+Patch10:    0011-Add-sailfish-arguments-to-the-systemd-unit-and-start.patch
 
 %define libglibutil_version 1.0.51
 
