@@ -5,28 +5,24 @@ Subject: [PATCH 1/1] Add voicecall support to the qmimodem driver
 
 Adds a call_list helper which could be shared across drivers
 ---
- Makefile.am                        |   7 +-
- drivers/common/call_list.c         | 158 +++++++++++
- drivers/common/call_list.h         |  51 ++++
- drivers/qmimodem/qmi.h             |  14 +
- drivers/qmimodem/voice.c           |  84 ++++++
- drivers/qmimodem/voice.h           | 106 ++++---
- drivers/qmimodem/voice_generated.c | 287 +++++++++++++++++++
- drivers/qmimodem/voice_generated.h | 136 +++++++++
- drivers/qmimodem/voicecall.c       | 433 ++++++++++++++++++++++++++++-
- src/common.h                       |   5 +
- 10 files changed, 1239 insertions(+), 42 deletions(-)
+ Makefile.am                  |   6 +-
+ drivers/common/call_list.c   | 151 ++++++++++++
+ drivers/common/call_list.h   |  49 ++++
+ drivers/qmimodem/qmi.h       |  14 ++
+ drivers/qmimodem/voice.c     | 365 +++++++++++++++++++++++++++++
+ drivers/qmimodem/voice.h     | 242 ++++++++++++++++---
+ drivers/qmimodem/voicecall.c | 435 ++++++++++++++++++++++++++++++++++-
+ src/common.h                 |   5 +
+ 8 files changed, 1223 insertions(+), 44 deletions(-)
  create mode 100644 drivers/common/call_list.c
  create mode 100644 drivers/common/call_list.h
  create mode 100644 drivers/qmimodem/voice.c
- create mode 100644 drivers/qmimodem/voice_generated.c
- create mode 100644 drivers/qmimodem/voice_generated.h
 
 diff --git a/Makefile.am b/Makefile.am
-index 636546189a50f338f77706ec465cded268a89210..4f3d129a68ed6f1dc24f5f328bcd68581ded9f04 100644
+index 636546189a50f338f77706ec465cded268a89210..7f8a691d6f0679eb94ccb64bf418cf20a98db689 100644
 --- a/Makefile.am
 +++ b/Makefile.am
-@@ -373,12 +373,13 @@ qmi_sources = drivers/qmimodem/qmi.h drivers/qmimodem/qmi.c \
+@@ -373,8 +373,8 @@ qmi_sources = drivers/qmimodem/qmi.h drivers/qmimodem/qmi.c \
  					drivers/qmimodem/pds.h \
  					drivers/qmimodem/common.h \
  					drivers/qmimodem/wda.h \
@@ -37,12 +33,7 @@ index 636546189a50f338f77706ec465cded268a89210..4f3d129a68ed6f1dc24f5f328bcd6858
  builtin_sources += $(qmi_sources) \
  			drivers/qmimodem/util.h \
  			drivers/qmimodem/devinfo.c \
- 			drivers/qmimodem/voicecall.c \
-+			drivers/qmimodem/voice_generated.c \
- 			drivers/qmimodem/network-registration.c \
- 			drivers/qmimodem/sim-legacy.c \
- 			drivers/qmimodem/sim.c \
-@@ -579,6 +580,8 @@ builtin_sources += plugins/ublox.c
+@@ -579,6 +579,8 @@ builtin_sources += plugins/ublox.c
  builtin_sources += plugins/xmm7xxx.c
  builtin_sources += plugins/droid.c
  
@@ -53,10 +44,10 @@ index 636546189a50f338f77706ec465cded268a89210..4f3d129a68ed6f1dc24f5f328bcd6858
  
 diff --git a/drivers/common/call_list.c b/drivers/common/call_list.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..bf638a21b36d718644cb549480c7d935952b2d27
+index 0000000000000000000000000000000000000000..13aa8dc57ada0931bdddac3e23ea944bf3be04d7
 --- /dev/null
 +++ b/drivers/common/call_list.c
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,151 @@
 +/*
 + *
 + *  oFono - Open Source Telephony
@@ -83,7 +74,8 @@ index 0000000000000000000000000000000000000000..bf638a21b36d718644cb549480c7d935
 +#include <config.h>
 +#endif
 +
-+#include <glib.h>
++#include <ell/ell.h>
++
 +#include <ofono/types.h>
 +
 +#include <ofono/types.h>
@@ -94,7 +86,7 @@ index 0000000000000000000000000000000000000000..bf638a21b36d718644cb549480c7d935
 +
 +#include <drivers/common/call_list.h>
 +
-+gint ofono_call_compare(gconstpointer a, gconstpointer b)
++int ofono_call_compare(const void *a, const void *b, void *data)
 +{
 +	const struct ofono_call *ca = a;
 +	const struct ofono_call *cb = b;
@@ -108,49 +100,39 @@ index 0000000000000000000000000000000000000000..bf638a21b36d718644cb549480c7d935
 +	return 0;
 +}
 +
-+gint ofono_call_compare_by_status(gconstpointer a, gconstpointer b)
++bool ofono_call_compare_by_status(const void *a, const void *b)
 +{
 +	const struct ofono_call *call = a;
-+	int status = GPOINTER_TO_INT(b);
++	int status = L_PTR_TO_INT(b);
 +
-+	if (status != call->status)
-+		return 1;
-+
-+	return 0;
++	return status == call->status;
 +}
 +
-+gint ofono_call_compare_by_id(gconstpointer a, gconstpointer b)
++bool ofono_call_compare_by_id(const void *a, const void *b)
 +{
 +	const struct ofono_call *call = a;
-+	unsigned int id = GPOINTER_TO_UINT(b);
++	unsigned int id = L_PTR_TO_UINT(b);
 +
-+	if (id < call->id)
-+		return -1;
-+
-+	if (id > call->id)
-+		return 1;
-+
-+	return 0;
++	return (call->id == id);
 +}
 +
 +void ofono_call_list_dial_callback(struct ofono_voicecall *vc,
-+				   GSList **call_list,
++				   struct l_queue **call_list,
 +				   const struct ofono_phone_number *ph,
 +				   int call_id)
 +{
 +	struct ofono_call *call;
-+	GSList *list;
 +
 +	/* check if call_id already present */
-+	list = g_slist_find_custom(*call_list,
-+				GINT_TO_POINTER(call_id),
-+				ofono_call_compare_by_id);
++	call = l_queue_find(*call_list,
++					 ofono_call_compare_by_id,
++				     L_UINT_TO_PTR(call_id));
 +
-+	if (list) {
++	if (call) {
 +		return;
 +	}
 +
-+	call = g_new0(struct ofono_call, 1);
++	call = l_new(struct ofono_call, 1);
 +	call->id = call_id;
 +
 +	memcpy(&call->called_number, ph, sizeof(*ph));
@@ -158,69 +140,71 @@ index 0000000000000000000000000000000000000000..bf638a21b36d718644cb549480c7d935
 +	call->status = CALL_STATUS_DIALING;
 +	call->type = 0; /* voice */
 +
-+	*call_list = g_slist_insert_sorted(*call_list,
-+					    call,
-+					    ofono_call_compare);
++	l_queue_insert(*call_list, call, ofono_call_compare, NULL);
++
 +	ofono_voicecall_notify(vc, call);
 +}
 +
 +void ofono_call_list_notify(struct ofono_voicecall *vc,
-+			    GSList **call_list,
-+			    GSList *calls)
++			    struct l_queue **call_list,
++			    struct l_queue *calls)
 +{
-+	GSList *old_calls = *call_list;
-+	GSList *new_calls = calls;
++	struct l_queue  *old_calls = *call_list;
++	struct l_queue  *new_calls = calls;
 +	struct ofono_call *new_call, *old_call;
++	const struct l_queue_entry *old_entry, *new_entry;
 +
-+	while (old_calls || new_calls) {
-+		old_call = old_calls ? old_calls->data : NULL;
-+		new_call = new_calls ? new_calls->data : NULL;
++	uint loop_length = MAX(l_queue_length(old_calls), l_queue_length(new_calls));
 +
-+		/* we drop disconnected calls and treat them as not existent */
++	old_entry = l_queue_get_entries(old_calls);
++	new_entry = l_queue_get_entries(new_calls);
++
++	for (uint i = 0; i < loop_length; ++i) {
++		old_call = old_entry ? old_entry->data : NULL;
++		new_call = new_entry ? new_entry->data : NULL;
++
 +		if (new_call && new_call->status == CALL_STATUS_DISCONNECTED) {
-+			new_calls = new_calls->next;
-+			calls = g_slist_remove(calls, new_call);
-+			g_free(new_call);
++			ofono_voicecall_disconnected(
++				vc,
++				new_call->id,
++				OFONO_DISCONNECT_REASON_REMOTE_HANGUP,
++				NULL);
++
++			l_queue_remove(calls, new_call);
++			l_free(new_call);
 +			continue;
 +		}
 +
-+		if (old_call &&
-+				(new_call == NULL ||
-+				(new_call->id > old_call->id))) {
++		if (old_call && (new_call == NULL || (new_call->id > old_call->id))) {
 +			ofono_voicecall_disconnected(
-+						vc,
-+						old_call->id,
-+						OFONO_DISCONNECT_REASON_UNKNOWN,
-+						NULL);
-+			old_calls = old_calls->next;
-+		} else if (new_call &&
-+			   (old_call == NULL ||
-+			   (new_call->id < old_call->id))) {
-+
++				vc,
++				old_call->id,
++				OFONO_DISCONNECT_REASON_REMOTE_HANGUP,
++				NULL);
++		} else if (new_call && (old_call == NULL || (new_call->id < old_call->id))) {
++			DBG("Notify new call %d", new_call->id);
 +			/* new call, signal it */
-+			if (new_call->type == 0)
++			if (new_call->type == 0) {
 +				ofono_voicecall_notify(vc, new_call);
-+
-+			new_calls = new_calls->next;
++			}
 +		} else {
 +			if (memcmp(new_call, old_call, sizeof(*new_call))
-+					&& new_call->type == 0)
++				&& new_call->type == 0)
 +				ofono_voicecall_notify(vc, new_call);
-+
-+			new_calls = new_calls->next;
-+			old_calls = old_calls->next;
 +		}
++		if (old_entry) old_entry = old_entry->next;
++		if (new_entry) new_entry = new_entry->next;
 +	}
 +
-+	g_slist_free_full(*call_list, g_free);
++	l_queue_destroy(*call_list, l_free);
 +	*call_list = calls;
 +}
 diff --git a/drivers/common/call_list.h b/drivers/common/call_list.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..80d4ffaba2abe1017bf63bc76597dee88c1c4916
+index 0000000000000000000000000000000000000000..746008bb156ec72c1e4eac32afd8c1f467cadc8a
 --- /dev/null
 +++ b/drivers/common/call_list.h
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,49 @@
 +/*
 + *
 + *  oFono - Open Source Telephony
@@ -245,21 +229,19 @@ index 0000000000000000000000000000000000000000..80d4ffaba2abe1017bf63bc76597dee8
 +#ifndef __OFONO_DRIVER_COMMON_CALL_LIST
 +#define __OFONO_DRIVER_COMMON_CALL_LIST
 +
-+#include <glib.h>
-+
 +struct ofono_voicecall;
 +struct ofono_phone_number;
 +
-+gint ofono_call_compare(gconstpointer a, gconstpointer b);
-+gint ofono_call_compare_by_status(gconstpointer a, gconstpointer b);
-+gint ofono_call_compare_by_id(gconstpointer a, gconstpointer b);
++int ofono_call_compare(const void *a, const void *b, void *data);
++bool ofono_call_compare_by_status(const void *a, const void *b);
++bool ofono_call_compare_by_id(const void *a, const void *b);
 +
 +/*
 + * Can be called by the driver in the dialing callback,
 + * when the new call id already known
 + */
 +void ofono_call_list_dial_callback(struct ofono_voicecall *vc,
-+				   GSList **call_list,
++				   struct l_queue **call_list,
 +				   const struct ofono_phone_number *ph,
 +				   int call_id);
 +
@@ -268,8 +250,8 @@ index 0000000000000000000000000000000000000000..80d4ffaba2abe1017bf63bc76597dee8
 + * Call list will take ownership of all ofono call within the calls.
 + */
 +void ofono_call_list_notify(struct ofono_voicecall *vc,
-+			    GSList **call_list,
-+			    GSList *calls);
++			    struct l_queue **call_list,
++			    struct l_queue *calls);
 +
 +#endif /* __OFONO_DRIVER_COMMON_CALL_LIST */
 diff --git a/drivers/qmimodem/qmi.h b/drivers/qmimodem/qmi.h
@@ -310,10 +292,10 @@ index 506fed6b3a66c874ff82b26559e478fc9533201e..9caffa88da9559ef625045843c0db49e
 +#endif /* __OFONO_QMI_QMI_H */
 diff --git a/drivers/qmimodem/voice.c b/drivers/qmimodem/voice.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..f9b1e3603c086a428762ac8aba8a1374b3baa9a0
+index 0000000000000000000000000000000000000000..138b2f63c62a66cfd43a0ad7639f4ba9250bacc8
 --- /dev/null
 +++ b/drivers/qmimodem/voice.c
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,365 @@
 +/*
 + *
 + *  oFono - Open Source Telephony
@@ -332,6 +314,7 @@ index 0000000000000000000000000000000000000000..f9b1e3603c086a428762ac8aba8a1374
 + */
 +
 +#include <stdint.h>
++#include <string.h>
 +
 +#include "voice.h"
 +
@@ -398,14 +381,297 @@ index 0000000000000000000000000000000000000000..f9b1e3603c086a428762ac8aba8a1374
 +	return qmi_direction - 1;
 +}
 +
++int qmi_voice_dial_call(
++	struct qmi_voice_dial_call_arg *arg,
++	struct qmi_service *service,
++	qmi_result_func_t func,
++	void *user_data,
++	qmi_destroy_func_t destroy)
++{
++	struct qmi_param *param = NULL;
++
++	param = qmi_param_new();
++	if (!param)
++		goto error;
++
++	if (arg->calling_number_set) {
++		if (!qmi_param_append(param,
++			0x1,
++			strlen(arg->calling_number),
++							  arg->calling_number))
++			goto error;
++	}
++
++	if (arg->call_type_set)
++		qmi_param_append_uint8(param, 0x10, arg->call_type);
++
++	if (qmi_service_send(service,
++		0x20,
++		param,
++		func,
++		user_data,
++		destroy) > 0)
++		return 0;
++	error:
++	g_free(param);
++	return 1;
++}
++
++enum parse_error qmi_voice_dial_call_parse(
++	struct qmi_result *qmi_result,
++	struct qmi_voice_dial_call_result *result)
++{
++	int err = NONE;
++
++	/* mandatory */
++	if (qmi_result_get_uint8(qmi_result, 0x10, &result->call_id))
++		result->call_id_set = 1;
++	else
++		err = MISSING_MANDATORY;
++
++	return err;
++}
++
++int qmi_voice_end_call(
++	struct qmi_voice_end_call_arg *arg,
++	struct qmi_service *service,
++	qmi_result_func_t func,
++	void *user_data,
++	qmi_destroy_func_t destroy)
++{
++	struct qmi_param *param = NULL;
++
++	param = qmi_param_new();
++	if (!param)
++		goto error;
++
++	if (arg->call_id_set) {
++		if (!qmi_param_append_uint8(
++			param,
++			0x1,
++			arg->call_id))
++			goto error;
++	}
++
++	if (qmi_service_send(service,
++		0x21,
++		param,
++		func,
++		user_data,
++		destroy) > 0)
++		return 0;
++	error:
++	g_free(param);
++	return 1;
++}
++
++enum parse_error qmi_voice_end_call_parse(
++	struct qmi_result *qmi_result,
++	struct qmi_voice_end_call_result *result)
++{
++	int err = NONE;
++
++	/* optional */
++	if (qmi_result_get_uint8(qmi_result, 0x10, &result->call_id))
++		result->call_id_set = 1;
++
++	return err;
++}
++
++
++int qmi_voice_answer_call(
++	struct qmi_voice_answer_call_arg *arg,
++	struct qmi_service *service,
++	qmi_result_func_t func,
++	void *user_data,
++	qmi_destroy_func_t destroy)
++{
++	struct qmi_param *param = NULL;
++
++	param = qmi_param_new();
++	if (!param)
++		goto error;
++
++	if (arg->call_id_set) {
++		if (!qmi_param_append_uint8(
++			param,
++			0x1,
++			arg->call_id))
++			goto error;
++	}
++
++	if (qmi_service_send(service,
++		0x22,
++		param,
++		func,
++		user_data,
++		destroy) > 0)
++		return 0;
++	error:
++	g_free(param);
++	return 1;
++}
++
++
++enum parse_error qmi_voice_answer_call_parse(
++	struct qmi_result *qmi_result,
++	struct qmi_voice_answer_call_result *result)
++{
++	int err = NONE;
++
++	/* optional */
++	if (qmi_result_get_uint8(qmi_result, 0x10, &result->call_id))
++		result->call_id_set = 1;
++
++	return err;
++}
++
++enum parse_error qmi_voice_call_status(
++	struct qmi_result *qmi_result,
++	struct qmi_voice_all_call_status_ind *result)
++{
++	int err = NONE;
++	int offset;
++	uint16_t len;
++	bool ind = TRUE;
++	const struct qmi_voice_remote_party_number *remote_party_number;
++	const struct qmi_voice_call_information *call_information;
++
++	/* mandatory */
++	call_information = qmi_result_get(qmi_result, 0x01, &len);
++
++	/* This is so ugly! but TLV for indicator and response is different */
++	if (!call_information) {
++		call_information = qmi_result_get(qmi_result, 0x10, &len);
++		ind = FALSE;
++	}
++
++	if (call_information)
++	{
++		/* verify the length */
++		if (len < sizeof(call_information->size))
++			return INVALID_LENGTH;
++
++		if (len != call_information->size * sizeof(struct qmi_voice_call_information_instance)
++			+ sizeof(call_information->size))
++			return INVALID_LENGTH;
++		result->call_information_set = 1;
++		result->call_information = call_information;
++	} else
++		return MISSING_MANDATORY;
++
++	/* mandatory */
++	remote_party_number = qmi_result_get(qmi_result, ind ? 0x10 : 0x11, &len);
++
++	if (remote_party_number) {
++		const struct qmi_voice_remote_party_number_instance *instance;
++		int instance_size = sizeof(struct qmi_voice_remote_party_number_instance);
++		int i;
++
++		/* verify the length */
++		if (len < sizeof(remote_party_number->size))
++			return INVALID_LENGTH;
++
++		for (i = 0, offset = sizeof(remote_party_number->size);
++			 offset <= len && i < 16 && i < remote_party_number->size; i++)
++			 {
++				 if (offset == len) {
++					 break;
++				 } else if (offset + instance_size > len) {
++					 return INVALID_LENGTH;
++				 }
++
++				 instance = (void *)remote_party_number + offset;
++				 result->remote_party_number[i] = instance;
++				 offset += sizeof(struct qmi_voice_remote_party_number_instance) + instance->number_size;
++			 }
++			 result->remote_party_number_set = 1;
++			 result->remote_party_number_size = remote_party_number->size;
++	} else
++		return MISSING_MANDATORY;
++
++	return err;
++}
++
++int qmi_voice_start_cont_dtmf(
++	struct qmi_voice_start_cont_dtmf_arg *arg,
++	struct qmi_service *service,
++	qmi_result_func_t func,
++	void *user_data,
++	qmi_destroy_func_t destroy)
++{
++	struct qmi_param *param = NULL;
++	uint8_t param_body[2];
++
++	param = qmi_param_new();
++	if (!param)
++		goto error;
++
++	param_body[0] = arg->call_id;
++	param_body[1] = arg->dtmf_char;
++
++	if (!qmi_param_append(
++		param,
++		0x1,
++		sizeof(param_body),
++						  param_body))
++		goto error;
++
++	if (qmi_service_send(service,
++		0x29,
++		param,
++		func,
++		user_data,
++		destroy) > 0)
++		return 0;
++
++	error:
++	g_free(param);
++	return 1;
++}
++
++int qmi_voice_stop_cont_dtmf(
++	struct qmi_voice_stop_cont_dtmf_arg *arg,
++	struct qmi_service *service,
++	qmi_result_func_t func,
++	void *user_data,
++	qmi_destroy_func_t destroy)
++{
++	struct qmi_param *param = NULL;
++
++	param = qmi_param_new();
++	if (!param)
++		goto error;
++
++	if (!qmi_param_append_uint8(
++		param,
++		0x1,
++		arg->call_id))
++		goto error;
++
++	if (qmi_service_send(service,
++		0x2a,
++		param,
++		func,
++		user_data,
++		destroy) > 0)
++		return 0;
++
++	error:
++	g_free(param);
++	return 1;
++}
 diff --git a/drivers/qmimodem/voice.h b/drivers/qmimodem/voice.h
-index 917e72f7134c077b2760608101a2d1148e67a4c2..54aeb86c8c9f2e3f766f261d5eb06d32263f9365 100644
+index 917e72f7134c077b2760608101a2d1148e67a4c2..5479939b2cb5d9e4e6726734e739e444e347bdbd 100644
 --- a/drivers/qmimodem/voice.h
 +++ b/drivers/qmimodem/voice.h
-@@ -15,6 +15,12 @@
+@@ -15,6 +15,15 @@
   *
   */
  
++#ifndef QMI_VOICE_H
++#define QMI_VOICE_H
++
 +#include "src/common.h"
 +
 +#define QMI_VOICE_IND_ALL_STATUS 0x2e
@@ -415,7 +681,7 @@ index 917e72f7134c077b2760608101a2d1148e67a4c2..54aeb86c8c9f2e3f766f261d5eb06d32
  #define QMI_VOICE_PARAM_USS_DATA 0x01
  
  #define QMI_VOICE_PARAM_ASYNC_USSD_ERROR 0x10
-@@ -34,6 +40,8 @@
+@@ -34,6 +43,8 @@
  /* default alphabet Language unspecific */
  #define USSD_DCS_UNSPECIFIC 0x0f
  
@@ -424,7 +690,7 @@ index 917e72f7134c077b2760608101a2d1148e67a4c2..54aeb86c8c9f2e3f766f261d5eb06d32
  /* based on qmi ussd definition */
  enum qmi_ussd_dcs {
  	QMI_USSD_DCS_ASCII = 0x1,
-@@ -48,22 +56,41 @@ enum qmi_ussd_user_required {
+@@ -48,22 +59,41 @@ enum qmi_ussd_user_required {
  
  /* QMI service voice. Using an enum to prevent doublicated entries */
  enum voice_commands {
@@ -482,7 +748,7 @@ index 917e72f7134c077b2760608101a2d1148e67a4c2..54aeb86c8c9f2e3f766f261d5eb06d32
  };
  
  struct qmi_ussd_data {
-@@ -73,28 +100,33 @@ struct qmi_ussd_data {
+@@ -73,28 +103,166 @@ struct qmi_ussd_data {
  } __attribute__((__packed__));
  
  enum qmi_ss_action {
@@ -531,315 +797,12 @@ index 917e72f7134c077b2760608101a2d1148e67a4c2..54aeb86c8c9f2e3f766f261d5eb06d32
 +	QMI_VOICE_SS_RSN_CALL_WAITING =         0x0F,
 +	QMI_VOICE_SS_RSN_CLIP =                 0x10,
 +	QMI_VOICE_SS_RSN_CLIR =                 0x11
- };
++};
 +
 +const char *qmi_voice_call_state_name(enum qmi_voice_call_state value);
 +uint8_t ofono_to_qmi_direction(enum call_direction ofono_direction);
 +enum call_direction qmi_to_ofono_direction(uint8_t qmi_direction);
 +int qmi_to_ofono_status(uint8_t status, int *ret);
-diff --git a/drivers/qmimodem/voice_generated.c b/drivers/qmimodem/voice_generated.c
-new file mode 100644
-index 0000000000000000000000000000000000000000..b579043f0733c0b9a52224145ef4926a839e51c9
---- /dev/null
-+++ b/drivers/qmimodem/voice_generated.c
-@@ -0,0 +1,287 @@
-+
-+#include <stdint.h>
-+#include <string.h>
-+#include <glib.h>
-+
-+#include "voice_generated.h"
-+
-+int qmi_voice_dial_call(
-+		struct qmi_voice_dial_call_arg *arg,
-+		struct qmi_service *service,
-+		qmi_result_func_t func,
-+		void *user_data,
-+		qmi_destroy_func_t destroy)
-+{
-+	struct qmi_param *param = NULL;
-+
-+	param = qmi_param_new();
-+	if (!param)
-+		goto error;
-+
-+	if (arg->calling_number_set) {
-+		if (!qmi_param_append(param,
-+				 0x1,
-+				 strlen(arg->calling_number),
-+				 arg->calling_number))
-+			goto error;
-+	}
-+
-+	if (arg->call_type_set)
-+		qmi_param_append_uint8(param, 0x10, arg->call_type);
-+
-+	if (qmi_service_send(service,
-+			     0x20,
-+			     param,
-+			     func,
-+			     user_data,
-+			     destroy) > 0)
-+		return 0;
-+error:
-+	g_free(param);
-+	return 1;
-+}
-+
-+enum parse_error qmi_voice_dial_call_parse(
-+		struct qmi_result *qmi_result,
-+		struct qmi_voice_dial_call_result *result)
-+{
-+	int err = NONE;
-+
-+	/* mandatory */
-+	if (qmi_result_get_uint8(qmi_result, 0x10, &result->call_id))
-+		result->call_id_set = 1;
-+	else
-+		err = MISSING_MANDATORY;
-+
-+	return err;
-+}
-+
-+int qmi_voice_end_call(
-+		struct qmi_voice_end_call_arg *arg,
-+		struct qmi_service *service,
-+		qmi_result_func_t func,
-+		void *user_data,
-+		qmi_destroy_func_t destroy)
-+{
-+	struct qmi_param *param = NULL;
-+
-+	param = qmi_param_new();
-+	if (!param)
-+		goto error;
-+
-+	if (arg->call_id_set) {
-+		if (!qmi_param_append_uint8(
-+					param,
-+					0x1,
-+					arg->call_id))
-+			goto error;
-+	}
-+
-+	if (qmi_service_send(service,
-+			     0x21,
-+			     param,
-+			     func,
-+			     user_data,
-+			     destroy) > 0)
-+		return 0;
-+error:
-+	g_free(param);
-+	return 1;
-+}
-+
-+enum parse_error qmi_voice_end_call_parse(
-+		struct qmi_result *qmi_result,
-+		struct qmi_voice_end_call_result *result)
-+{
-+	int err = NONE;
-+
-+	/* optional */
-+	if (qmi_result_get_uint8(qmi_result, 0x10, &result->call_id))
-+		result->call_id_set = 1;
-+
-+	return err;
-+}
-+
-+
-+int qmi_voice_answer_call(
-+		struct qmi_voice_answer_call_arg *arg,
-+		struct qmi_service *service,
-+		qmi_result_func_t func,
-+		void *user_data,
-+		qmi_destroy_func_t destroy)
-+{
-+	struct qmi_param *param = NULL;
-+
-+	param = qmi_param_new();
-+	if (!param)
-+		goto error;
-+
-+	if (arg->call_id_set) {
-+		if (!qmi_param_append_uint8(
-+					param,
-+					0x1,
-+					arg->call_id))
-+			goto error;
-+	}
-+
-+	if (qmi_service_send(service,
-+			     0x22,
-+			     param,
-+			     func,
-+			     user_data,
-+			     destroy) > 0)
-+		return 0;
-+error:
-+	g_free(param);
-+	return 1;
-+}
-+
-+
-+enum parse_error qmi_voice_answer_call_parse(
-+		struct qmi_result *qmi_result,
-+		struct qmi_voice_answer_call_result *result)
-+{
-+	int err = NONE;
-+
-+	/* optional */
-+	if (qmi_result_get_uint8(qmi_result, 0x10, &result->call_id))
-+		result->call_id_set = 1;
-+
-+	return err;
-+}
-+
-+enum parse_error qmi_voice_call_status(
-+		struct qmi_result *qmi_result,
-+		struct qmi_voice_all_call_status_ind *result)
-+{
-+	int err = NONE;
-+	int offset;
-+	uint16_t len;
-+	bool ind = TRUE;
-+	const struct qmi_voice_remote_party_number *remote_party_number;
-+	const struct qmi_voice_call_information *call_information;
-+
-+	/* mandatory */
-+	call_information = qmi_result_get(qmi_result, 0x01, &len);
-+
-+	/* This is so ugly! but TLV for indicator and response is different */
-+	if (!call_information) {
-+		call_information = qmi_result_get(qmi_result, 0x10, &len);
-+		ind = FALSE;
-+	}
-+
-+	if (call_information)
-+	{
-+		/* verify the length */
-+		if (len < sizeof(call_information->size))
-+			return INVALID_LENGTH;
-+
-+		if (len != call_information->size * sizeof(struct qmi_voice_call_information_instance)
-+			    + sizeof(call_information->size))
-+			return INVALID_LENGTH;
-+		result->call_information_set = 1;
-+		result->call_information = call_information;
-+	} else
-+		return MISSING_MANDATORY;
-+
-+	/* mandatory */
-+	remote_party_number = qmi_result_get(qmi_result, ind ? 0x10 : 0x11, &len);
-+
-+	if (remote_party_number) {
-+		const struct qmi_voice_remote_party_number_instance *instance;
-+		int instance_size = sizeof(struct qmi_voice_remote_party_number_instance);
-+		int i;
-+
-+		/* verify the length */
-+		if (len < sizeof(remote_party_number->size))
-+			return INVALID_LENGTH;
-+
-+		for (i = 0, offset = sizeof(remote_party_number->size);
-+		     offset <= len && i < 16 && i < remote_party_number->size; i++)
-+		{
-+			if (offset == len) {
-+				break;
-+			} else if (offset + instance_size > len) {
-+				return INVALID_LENGTH;
-+			}
-+
-+			instance = (void *)remote_party_number + offset;
-+			result->remote_party_number[i] = instance;
-+			offset += sizeof(struct qmi_voice_remote_party_number_instance) + instance->number_size;
-+		}
-+		result->remote_party_number_set = 1;
-+		result->remote_party_number_size = remote_party_number->size;
-+	} else
-+		return MISSING_MANDATORY;
-+
-+	return err;
-+}
-+
-+int qmi_voice_start_cont_dtmf(
-+		struct qmi_voice_start_cont_dtmf_arg *arg,
-+		struct qmi_service *service,
-+		qmi_result_func_t func,
-+		void *user_data,
-+		qmi_destroy_func_t destroy)
-+{
-+	struct qmi_param *param = NULL;
-+	uint8_t param_body[2];
-+
-+	param = qmi_param_new();
-+	if (!param)
-+		goto error;
-+
-+	param_body[0] = arg->call_id;
-+	param_body[1] = arg->dtmf_char;
-+
-+	if (!qmi_param_append(
-+			param,
-+			0x1,
-+			sizeof(param_body),
-+			param_body))
-+		goto error;
-+
-+	if (qmi_service_send(service,
-+						 0x29,
-+						 param,
-+						 func,
-+						 user_data,
-+						 destroy) > 0)
-+		return 0;
-+
-+error:
-+	g_free(param);
-+	return 1;
-+}
-+
-+int qmi_voice_stop_cont_dtmf(
-+		struct qmi_voice_stop_cont_dtmf_arg *arg,
-+		struct qmi_service *service,
-+		qmi_result_func_t func,
-+		void *user_data,
-+		qmi_destroy_func_t destroy)
-+{
-+	struct qmi_param *param = NULL;
-+
-+	param = qmi_param_new();
-+	if (!param)
-+		goto error;
-+
-+	if (!qmi_param_append_uint8(
-+			param,
-+			0x1,
-+			arg->call_id))
-+		goto error;
-+
-+	if (qmi_service_send(service,
-+						 0x2a,
-+						 param,
-+						 func,
-+						 user_data,
-+						 destroy) > 0)
-+		return 0;
-+
-+error:
-+	g_free(param);
-+	return 1;
-+}
-\ No newline at end of file
-diff --git a/drivers/qmimodem/voice_generated.h b/drivers/qmimodem/voice_generated.h
-new file mode 100644
-index 0000000000000000000000000000000000000000..c627fe10ae0745fafa9747e005f423f135297297
---- /dev/null
-+++ b/drivers/qmimodem/voice_generated.h
-@@ -0,0 +1,136 @@
-+
-+#ifndef __OFONO_QMI_VOICE_GENERATED_H
-+#define __OFONO_QMI_VOICE_GENERATED_H
 +
 +#include "qmi.h"
 +
@@ -865,11 +828,11 @@ index 0000000000000000000000000000000000000000..c627fe10ae0745fafa9747e005f423f1
 +};
 +
 +int qmi_voice_dial_call(
-+		struct qmi_voice_dial_call_arg *arg,
-+		struct qmi_service *service,
-+		qmi_result_func_t func,
-+		void *user_data,
-+		qmi_destroy_func_t destroy);
++	struct qmi_voice_dial_call_arg *arg,
++	struct qmi_service *service,
++	qmi_result_func_t func,
++	void *user_data,
++	qmi_destroy_func_t destroy);
 +
 +struct qmi_voice_dial_call_result {
 +	bool call_id_set;
@@ -877,20 +840,20 @@ index 0000000000000000000000000000000000000000..c627fe10ae0745fafa9747e005f423f1
 +};
 +
 +enum parse_error qmi_voice_dial_call_parse(
-+		struct qmi_result *qmi_result,
-+		struct qmi_voice_dial_call_result *result);
++	struct qmi_result *qmi_result,
++	struct qmi_voice_dial_call_result *result);
 +
 +struct qmi_voice_end_call_arg {
 +	bool call_id_set;
 +	uint8_t call_id;
-+};
+ };
 +
 +int qmi_voice_end_call(
-+		struct qmi_voice_end_call_arg *arg,
-+		struct qmi_service *service,
-+		qmi_result_func_t func,
-+		void *user_data,
-+		qmi_destroy_func_t destroy);
++	struct qmi_voice_end_call_arg *arg,
++	struct qmi_service *service,
++	qmi_result_func_t func,
++	void *user_data,
++	qmi_destroy_func_t destroy);
 +
 +struct qmi_voice_end_call_result {
 +	bool call_id_set;
@@ -898,8 +861,8 @@ index 0000000000000000000000000000000000000000..c627fe10ae0745fafa9747e005f423f1
 +};
 +
 +enum parse_error qmi_voice_end_call_parse(
-+		struct qmi_result *qmi_result,
-+		struct qmi_voice_end_call_result *result);
++	struct qmi_result *qmi_result,
++	struct qmi_voice_end_call_result *result);
 +
 +struct qmi_voice_answer_call_arg {
 +	bool call_id_set;
@@ -907,11 +870,11 @@ index 0000000000000000000000000000000000000000..c627fe10ae0745fafa9747e005f423f1
 +};
 +
 +int qmi_voice_answer_call(
-+		struct qmi_voice_answer_call_arg *arg,
-+		struct qmi_service *service,
-+		qmi_result_func_t func,
-+		void *user_data,
-+		qmi_destroy_func_t destroy);
++	struct qmi_voice_answer_call_arg *arg,
++	struct qmi_service *service,
++	qmi_result_func_t func,
++	void *user_data,
++	qmi_destroy_func_t destroy);
 +
 +struct qmi_voice_answer_call_result {
 +	bool call_id_set;
@@ -919,8 +882,8 @@ index 0000000000000000000000000000000000000000..c627fe10ae0745fafa9747e005f423f1
 +};
 +
 +enum parse_error qmi_voice_answer_call_parse(
-+		struct qmi_result *qmi_result,
-+		struct qmi_voice_answer_call_result *result);
++	struct qmi_result *qmi_result,
++	struct qmi_voice_answer_call_result *result);
 +
 +struct qmi_voice_call_information_instance {
 +	uint8_t id;
@@ -946,8 +909,8 @@ index 0000000000000000000000000000000000000000..c627fe10ae0745fafa9747e005f423f1
 +};
 +
 +enum parse_error qmi_voice_call_status(
-+		struct qmi_result *qmi_result,
-+		struct qmi_voice_all_call_status_ind *result);
++	struct qmi_result *qmi_result,
++	struct qmi_voice_all_call_status_ind *result);
 +
 +struct qmi_voice_start_cont_dtmf_arg {
 +	uint8_t call_id;
@@ -955,26 +918,26 @@ index 0000000000000000000000000000000000000000..c627fe10ae0745fafa9747e005f423f1
 +};
 +
 +int qmi_voice_start_cont_dtmf(
-+		struct qmi_voice_start_cont_dtmf_arg *arg,
-+		struct qmi_service *service,
-+		qmi_result_func_t func,
-+		void *user_data,
-+		qmi_destroy_func_t destroy);
++	struct qmi_voice_start_cont_dtmf_arg *arg,
++	struct qmi_service *service,
++	qmi_result_func_t func,
++	void *user_data,
++	qmi_destroy_func_t destroy);
 +
 +struct qmi_voice_stop_cont_dtmf_arg {
 +	uint8_t call_id;
 +};
 +
 +int qmi_voice_stop_cont_dtmf(
-+		struct qmi_voice_stop_cont_dtmf_arg *arg,
-+		struct qmi_service *service,
-+		qmi_result_func_t func,
-+		void *user_data,
-+		qmi_destroy_func_t destroy);
++	struct qmi_voice_stop_cont_dtmf_arg *arg,
++	struct qmi_service *service,
++	qmi_result_func_t func,
++	void *user_data,
++	qmi_destroy_func_t destroy);
 +
-+#endif /* __OFONO_QMI_VOICE_GENERATED_H */
++#endif
 diff --git a/drivers/qmimodem/voicecall.c b/drivers/qmimodem/voicecall.c
-index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa194862bb5 100644
+index 059edbae9ac55774e452444dd6289e1875f5b7cf..6c893f4e5346eae9a72604f0cd66d7a9077df189 100644
 --- a/drivers/qmimodem/voicecall.c
 +++ b/drivers/qmimodem/voicecall.c
 @@ -3,6 +3,7 @@
@@ -985,7 +948,7 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
   *
   *  This program is free software; you can redistribute it and/or modify
   *  it under the terms of the GNU General Public License version 2 as
-@@ -23,20 +24,122 @@
+@@ -23,20 +24,125 @@
  #include <config.h>
  #endif
  
@@ -1003,7 +966,6 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
 +#include "qmi.h"
  #include "util.h"
 +#include "voice.h"
-+#include "voice_generated.h"
 +
 +#ifndef ARRAY_SIZE
 +#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
@@ -1019,7 +981,7 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
  	struct qmi_service *voice;
  	uint16_t major;
  	uint16_t minor;
-+	GSList *call_list;
++	struct l_queue *call_list;
 +	struct voicecall_static *vs;
 +	struct ofono_phone_number dialed;
  };
@@ -1028,11 +990,14 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
 +{
 +	struct ofono_voicecall *vc = user_data;
 +	struct voicecall_data *vd = ofono_voicecall_get_data(vc);
-+	GSList *calls = NULL;
++	struct l_queue *calls = NULL;
 +	int i;
 +	int size = 0;
 +	struct qmi_voice_all_call_status_ind status_ind;
 +
++	calls = l_queue_new();
++
++	DBG("");
 +	if (qmi_voice_call_status(result, &status_ind) != NONE) {
 +		DBG("Parsing of all call status indication failed");
 +		return;
@@ -1062,7 +1027,7 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
 +		int number_size;
 +
 +		call_info = status_ind.call_information->instance[i];
-+		call = g_new0(struct ofono_call, 1);
++		call = l_new(struct ofono_call, 1);
 +		call->id = call_info.id;
 +		call->direction = qmi_to_ofono_direction(call_info.direction);
 +
@@ -1089,7 +1054,8 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
 +		else
 +			call->clip_validity = 2;
 +
-+		calls = g_slist_insert_sorted(calls, call, ofono_call_compare);
++		l_queue_push_tail(calls, call);
++		DBG("%d", l_queue_length(calls));
 +	}
 +
 +	ofono_call_list_notify(vc, &vd->call_list, calls);
@@ -1109,7 +1075,7 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
  static void create_voice_cb(struct qmi_service *service, void *user_data)
  {
  	struct ofono_voicecall *vc = user_data;
-@@ -58,6 +161,15 @@ static void create_voice_cb(struct qmi_service *service, void *user_data)
+@@ -58,6 +164,15 @@ static void create_voice_cb(struct qmi_service *service, void *user_data)
  
  	data->voice = qmi_service_ref(service);
  
@@ -1125,7 +1091,17 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
  	ofono_voicecall_register(vc);
  }
  
-@@ -77,7 +189,6 @@ static int qmi_voicecall_probe(struct ofono_voicecall *vc,
+@@ -69,7 +184,8 @@ static int qmi_voicecall_probe(struct ofono_voicecall *vc,
+ 
+ 	DBG("");
+ 
+-	data = g_new0(struct voicecall_data, 1);
++	data = l_new(struct voicecall_data, 1);
++	data->call_list = l_queue_new();
+ 
+ 	ofono_voicecall_set_data(vc, data);
+ 
+@@ -77,7 +193,6 @@ static int qmi_voicecall_probe(struct ofono_voicecall *vc,
  					create_voice_cb, vc, NULL);
  
  	return 0;
@@ -1133,15 +1109,16 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
  }
  
  static void qmi_voicecall_remove(struct ofono_voicecall *vc)
-@@ -92,13 +203,329 @@ static void qmi_voicecall_remove(struct ofono_voicecall *vc)
+@@ -92,13 +207,323 @@ static void qmi_voicecall_remove(struct ofono_voicecall *vc)
  
  	qmi_service_unref(data->voice);
  
-+	g_slist_free_full(data->call_list, g_free);
+-	g_free(data);
++	l_queue_destroy(data->call_list, l_free);
 +
- 	g_free(data);
- }
- 
++	l_free(data);
++}
++
 +static void dial_cb(struct qmi_result *result, void *user_data)
 +{
 +	struct cb_data *cbd = user_data;
@@ -1201,11 +1178,11 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
 +				vd->voice,
 +				dial_cb,
 +				cbd,
-+				g_free))
++				l_free))
 +		return;
 +
 +	CALLBACK_WITH_FAILURE(cb, data);
-+	g_free(cbd);
++	l_free(cbd);
 +}
 +
 +static void answer_cb(struct qmi_result *result, void *user_data)
@@ -1237,21 +1214,17 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
 +	struct cb_data *cbd = cb_data_new(cb, data);
 +	struct qmi_voice_answer_call_arg arg;
 +	struct ofono_call *call;
-+	GSList *list;
 +
-+	DBG("");
 +	cbd->user = vc;
 +
-+	list = g_slist_find_custom(vd->call_list,
-+				   GINT_TO_POINTER(CALL_STATUS_INCOMING),
-+				   ofono_call_compare_by_status);
++	call = l_queue_find(vd->call_list,
++					ofono_call_compare_by_status,
++					L_UINT_TO_PTR(CALL_STATUS_INCOMING));
 +
-+	if (list == NULL) {
++	if (call == NULL) {
 +		DBG("Can not find a call to answer");
 +		goto err;
 +	}
-+
-+	call = list->data;
 +
 +	arg.call_id_set = true;
 +	arg.call_id = call->id;
@@ -1261,11 +1234,11 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
 +				vd->voice,
 +				answer_cb,
 +				cbd,
-+				g_free))
++				l_free))
 +		return;
 +err:
 +	CALLBACK_WITH_FAILURE(cb, data);
-+	g_free(cbd);
++	l_free(cbd);
 +}
 +
 +static void end_cb(struct qmi_result *result, void *user_data)
@@ -1307,11 +1280,11 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
 +				vd->voice,
 +				end_cb,
 +				cbd,
-+				g_free))
++				l_free))
 +		return;
 +
 +	CALLBACK_WITH_FAILURE(cb, data);
-+	g_free(cbd);
++	l_free(cbd);
 +}
 +
 +static void hangup_active(struct ofono_voicecall *vc,
@@ -1319,7 +1292,6 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
 +{
 +	struct voicecall_data *vd = ofono_voicecall_get_data(vc);
 +	struct ofono_call *call;
-+	GSList *list = NULL;
 +	enum call_status active[] = {
 +		CALL_STATUS_ACTIVE,
 +		CALL_STATUS_DIALING,
@@ -1330,21 +1302,20 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
 +
 +	DBG("");
 +	for (i = 0; i < ARRAY_SIZE(active); i++) {
-+		list = g_slist_find_custom(vd->call_list,
-+					   GINT_TO_POINTER(active[i]),
-+					   ofono_call_compare_by_status);
++		call = l_queue_find(vd->call_list,
++					   ofono_call_compare_by_status,
++					   L_INT_TO_PTR(active[i]));
 +
-+		if (list)
++		if (call)
 +			break;
 +	}
 +
-+	if (list == NULL) {
++	if (call == NULL) {
 +		DBG("Can not find a call to hang up");
 +		CALLBACK_WITH_FAILURE(cb, data);
 +		return;
 +	}
 +
-+	call = list->data;
 +	release_specific(vc, call->id, cb, data);
 +}
 +
@@ -1385,7 +1356,7 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
 +								  vd->voice,
 +								  stop_cont_dtmf_cb,
 +								  cbd,
-+								  g_free))
++								  l_free))
 +		return;
 +
 +	CALLBACK_WITH_FAILURE(cb, cbd->data);
@@ -1410,7 +1381,7 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
 +		return;
 +
 +	CALLBACK_WITH_FAILURE(cb, data);
-+	g_free(cbd);
++	l_free(cbd);
 +}
 +
 +struct send_one_dtmf_cb_data {
@@ -1430,9 +1401,9 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
 +		} else {
 +			CALLBACK_WITH_FAILURE(cb, cbd->data);
 +		}
-+		g_free((gpointer)send_one_dtmf_cb_data->full_dtmf);
-+		g_free(send_one_dtmf_cb_data);
-+		g_free(cbd);
++		l_free((void *)send_one_dtmf_cb_data->full_dtmf);
++		l_free(send_one_dtmf_cb_data);
++		l_free(cbd);
 +	} else {
 +		send_one_dtmf(send_one_dtmf_cb_data->vc, *(send_one_dtmf_cb_data->next_dtmf++), send_one_dtmf_cb, data);
 +	}
@@ -1442,16 +1413,16 @@ index 059edbae9ac55774e452444dd6289e1875f5b7cf..5bc0e800f1316dea888a49c43ad5aaa1
 +			ofono_voicecall_cb_t cb, void *data)
 +{
 +	struct cb_data *cbd = cb_data_new(cb, data);
-+	struct send_one_dtmf_cb_data *send_one_dtmf_cb_data = g_new(struct send_one_dtmf_cb_data, 1);
++	struct send_one_dtmf_cb_data *send_one_dtmf_cb_data = l_new(struct send_one_dtmf_cb_data, 1);
 +
-+	send_one_dtmf_cb_data->full_dtmf = g_strdup(dtmf);
++	send_one_dtmf_cb_data->full_dtmf = l_strdup(dtmf);
 +	send_one_dtmf_cb_data->next_dtmf = &send_one_dtmf_cb_data->full_dtmf[1];
 +	send_one_dtmf_cb_data->vc = vc;
 +	cbd->user = send_one_dtmf_cb_data;
 +
 +	send_one_dtmf(vc, *dtmf, send_one_dtmf_cb, cbd);
-+}
-+
+ }
+ 
  static const struct ofono_voicecall_driver driver = {
  	.probe		= qmi_voicecall_probe,
  	.remove		= qmi_voicecall_remove,
