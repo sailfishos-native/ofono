@@ -12,11 +12,12 @@ diff --git a/plugins/gobi.c b/plugins/gobi.c
 index 99a7d5564ed8f52ac71d1e4db63d8877fd1b031b..d5442b9c79eace1d28863fc7a86e48d882c5160d 100644
 --- a/plugins/gobi.c
 +++ b/plugins/gobi.c
-@@ -52,6 +52,7 @@
+@@ -52,6 +52,8 @@
  #include <ofono/location-reporting.h>
  #include <ofono/log.h>
  #include <ofono/message-waiting.h>
 +#include <ofono/slot.h>
++#include <glib.h>
  
  #include <ell/ell.h>
  
