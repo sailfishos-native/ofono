@@ -9,31 +9,28 @@ Mb2-scrape: filename=0010-Add-slot-support-to-the-gobi-plugin.patch
  1 file changed, 192 insertions(+), 1 deletion(-)
 
 diff --git a/plugins/gobi.c b/plugins/gobi.c
-index 99a7d5564ed8f52ac71d1e4db63d8877fd1b031b..d5442b9c79eace1d28863fc7a86e48d882c5160d 100644
+index 431df17e..a12dba01 100644
 --- a/plugins/gobi.c
 +++ b/plugins/gobi.c
-@@ -52,6 +52,8 @@
+@@ -52,6 +52,7 @@
  #include <ofono/location-reporting.h>
  #include <ofono/log.h>
  #include <ofono/message-waiting.h>
 +#include <ofono/slot.h>
-+#include <glib.h>
- 
+
  #include <ell/ell.h>
- 
-@@ -72,10 +73,36 @@
+
+@@ -72,10 +73,34 @@
  #define GOBI_VOICE	(1 << 9)
  #define GOBI_WDA	(1 << 10)
- 
+
 +#define IMEI_LEN 16
 +
 +static char imei[IMEI_LEN] = "1234567890123456";
 +
 +typedef struct ofono_slot_driver_data {
 +	struct ofono_slot_manager *slot_manager;
-+	gulong caps_manager_event_id;
-+	guint start_timeout_id;
-+	GSList *slots;
++	struct l_queue *slots;
 +} GobiPlugin;
 +
 +typedef struct ofono_slot_data {
@@ -46,7 +43,7 @@ index 99a7d5564ed8f52ac71d1e4db63d8877fd1b031b..d5442b9c79eace1d28863fc7a86e48d8
 +static struct ofono_modem *global_modem = NULL;
 +static GobiPlugin *global_plugin = NULL;
 +static struct ofono_slot_driver_reg *gobi_ofono_slot_driver = NULL;
-+static gboolean gobi_slot_plugin_start(gpointer user_data);
++static bool gobi_slot_plugin_start(void *user_data);
 +static void gobi_slot_driver_startup_check();
 +static void gobi_slot_set_sim_state(struct ofono_sim *sim);
 +
@@ -58,10 +55,10 @@ index 99a7d5564ed8f52ac71d1e4db63d8877fd1b031b..d5442b9c79eace1d28863fc7a86e48d8
  	unsigned long features;
  	unsigned int discover_attempts;
  	uint8_t oper_mode;
-@@ -94,6 +121,28 @@ static void gobi_debug(const char *str, void *user_data)
+@@ -94,6 +119,28 @@ static void gobi_debug(const char *str, void *user_data)
  	ofono_info("%s%s", prefix, str);
  }
- 
+
 +/*IMEI CALLBACK*/
 +static void gobi_get_ids_cb(struct qmi_result *result, void *user_data)
 +{
@@ -87,32 +84,30 @@ index 99a7d5564ed8f52ac71d1e4db63d8877fd1b031b..d5442b9c79eace1d28863fc7a86e48d8
  static int gobi_probe(struct ofono_modem *modem)
  {
  	struct gobi_data *data;
-@@ -120,6 +169,13 @@ static int gobi_probe(struct ofono_modem *modem)
- 
+@@ -119,6 +166,11 @@ static int gobi_probe(struct ofono_modem *modem)
  	ofono_modem_set_data(modem, data);
- 
+ 	ofono_modem_set_capabilities(modem, OFONO_MODEM_CAPABILITY_LTE);
+
 +	if (!global_modem) {
 +		global_modem = modem;
 +	}
 +
-+	/* Register the slot driver later */
-+	//g_idle_add(gobi_slot_plugin_start, gobi_ofono_slot_driver);
 +    gobi_slot_plugin_start(gobi_ofono_slot_driver);
  	return 0;
  }
- 
-@@ -147,6 +203,8 @@ static void gobi_remove(struct ofono_modem *modem)
- 
+
+@@ -146,6 +198,8 @@ static void gobi_remove(struct ofono_modem *modem)
+
  	cleanup_services(data);
- 
+
 +	ofono_slot_driver_unregister(gobi_ofono_slot_driver);
 +
  	qmi_device_free(data->device);
- 
- 	g_free(data);
-@@ -311,6 +369,11 @@ static void get_data_format_cb(struct qmi_result *result, void *user_data)
+
+ 	l_free(data);
+@@ -310,6 +364,11 @@ static void get_data_format_cb(struct qmi_result *result, void *user_data)
  	}
- 
+
  done:
 +
 +	/*Get modem IMEI*/
@@ -122,48 +117,49 @@ index 99a7d5564ed8f52ac71d1e4db63d8877fd1b031b..d5442b9c79eace1d28863fc7a86e48d8
  	if (qmi_service_send(data->dms, QMI_DMS_GET_CAPS, NULL,
  						get_caps_cb, modem, NULL) > 0)
  		return;
-@@ -625,7 +688,7 @@ static void gobi_pre_sim(struct ofono_modem *modem)
+@@ -635,7 +694,7 @@ static void gobi_pre_sim(struct ofono_modem *modem)
  		sim_driver = "qmimodem_legacy";
- 
+
  	if (sim_driver)
 -		ofono_sim_create(modem, 0, sim_driver, data->device);
 +		data->sim = ofono_sim_create(modem, 0, sim_driver, data->device);
- 
+
  	if (data->features & GOBI_VOICE)
  		ofono_voicecall_create(modem, 0, "qmimodem", data->device);
-@@ -633,6 +696,8 @@ static void gobi_pre_sim(struct ofono_modem *modem)
+@@ -643,6 +702,8 @@ static void gobi_pre_sim(struct ofono_modem *modem)
  	if (data->features & GOBI_PDS)
  		ofono_location_reporting_create(modem, 0, "qmimodem",
  							data->device);
 +
 +	gobi_slot_set_sim_state(data->sim);
  }
- 
+
  static void gobi_setup_gprs(struct ofono_modem *modem)
-@@ -732,6 +797,8 @@ static void gobi_post_sim(struct ofono_modem *modem)
- 
+@@ -742,6 +803,8 @@ static void gobi_post_sim(struct ofono_modem *modem)
+
  	if (data->features & GOBI_WDS)
  		gobi_setup_gprs(modem);
 +
 +	gobi_slot_set_sim_state(data->sim);
  }
- 
+
  static void gobi_post_online(struct ofono_modem *modem)
-@@ -754,6 +821,130 @@ static void gobi_post_online(struct ofono_modem *modem)
+@@ -764,6 +827,131 @@ static void gobi_post_online(struct ofono_modem *modem)
  	}
  }
- 
+
 +// ========== Slot Driver ==========
 +
 +static GobiPlugin *gobi_slot_driver_init(struct ofono_slot_manager *m)
 +{
 +	DBG("gobi_slot_driver_init");
 +
-+	GobiPlugin *plugin = g_new0(GobiPlugin, 1);
++	GobiPlugin *plugin = l_new(GobiPlugin, 1);
 +	plugin->slot_manager = m;
 +
-+	GobiSlot *slot = g_new0(GobiSlot, 1);
-+	plugin->slots = g_slist_insert(plugin->slots, slot, 0);
++	GobiSlot *slot = l_new(GobiSlot, 1);
++	plugin->slots = l_queue_new();
++	l_queue_push_tail(plugin->slots, slot);
 +
 +	global_plugin = plugin;
 +	return plugin;
@@ -179,7 +175,7 @@ index 99a7d5564ed8f52ac71d1e4db63d8877fd1b031b..d5442b9c79eace1d28863fc7a86e48d8
 +	}
 +
 +	GobiSlot *slot = NULL;
-+	slot = (GobiSlot *)g_slist_nth_data(global_plugin->slots, 0);
++	slot = (GobiSlot *)l_queue_peek_head(global_plugin->slots);
 +
 +	if (!slot) {
 +		DBG("No slot yet");
@@ -220,7 +216,7 @@ index 99a7d5564ed8f52ac71d1e4db63d8877fd1b031b..d5442b9c79eace1d28863fc7a86e48d8
 +	}
 +
 +	GobiSlot *slot = NULL;
-+	slot = (GobiSlot *)g_slist_nth_data(global_plugin->slots, 0);
++	slot = (GobiSlot *)l_queue_peek_head(global_plugin->slots);
 +
 +	if (!slot) {
 +		DBG("No slot yet");
@@ -233,7 +229,7 @@ index 99a7d5564ed8f52ac71d1e4db63d8877fd1b031b..d5442b9c79eace1d28863fc7a86e48d8
 +	l_strlcpy(slot->imei, imei, sizeof(slot->imei) );
 +
 +	slot->handle = ofono_slot_add(global_plugin->slot_manager,
-+				"/quectelqmi_0", (OFONO_RADIO_ACCESS_MODE_GSM | OFONO_RADIO_ACCESS_MODE_UMTS | OFONO_RADIO_ACCESS_MODE_LTE),
++				ofono_modem_get_path(slot->modem), (OFONO_RADIO_ACCESS_MODE_GSM | OFONO_RADIO_ACCESS_MODE_UMTS | OFONO_RADIO_ACCESS_MODE_LTE),
 +				slot->imei, "00",
 +				OFONO_SLOT_SIM_UNKNOWN,
 +				OFONO_SLOT_NO_FLAGS);
@@ -242,25 +238,25 @@ index 99a7d5564ed8f52ac71d1e4db63d8877fd1b031b..d5442b9c79eace1d28863fc7a86e48d8
 +	_started = true;
 +}
 +
-+static guint gobi_slot_driver_start(GobiPlugin *plugin)
++static uint gobi_slot_driver_start(GobiPlugin *plugin)
 +{
 +	DBG("gobi_slot_driver_start");
 +	return 1;
 +}
 +
-+static void gobi_slot_driver_cancel(GobiPlugin *plugin, guint id)
++static void gobi_slot_driver_cancel(GobiPlugin *plugin, uint id)
 +{
 +	DBG("gobi_slot_driver_cancel");
-+	g_source_remove(id);
 +}
 +
 +static void gobi_slot_driver_cleanup(GobiPlugin *plugin)
 +{
 +	DBG("gobi_slot_driver_cleanup");
-+	g_free(plugin);
++	l_queue_destroy(plugin->slots, l_free);
++	l_free(plugin);
 +}
 +
-+static gboolean gobi_slot_plugin_start(gpointer user_data)
++static bool gobi_slot_plugin_start(void *user_data)
 +{
 +	ofono_info("gobi_slot_plugin_start");
 +	static const struct ofono_slot_driver gobi_slot_driver = {
@@ -274,7 +270,7 @@ index 99a7d5564ed8f52ac71d1e4db63d8877fd1b031b..d5442b9c79eace1d28863fc7a86e48d8
 +
 +	/* Register the driver */
 +	gobi_ofono_slot_driver = ofono_slot_driver_register(&gobi_slot_driver);
-+	return G_SOURCE_REMOVE;
++	return true;
 +}
 +
  static struct ofono_modem_driver gobi_driver = {
