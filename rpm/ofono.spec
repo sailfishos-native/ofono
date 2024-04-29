@@ -17,7 +17,6 @@ Patch7:     0008-Add-the-sailfish-slot-manager-and-dbus-interface.patch
 Patch8:     0009-Initialise-the-slot-manager-on-startup.patch
 Patch9:     0010-Add-slot-support-to-the-gobi-plugin.patch
 Patch10:    0011-Add-sailfish-arguments-to-the-systemd-unit-and-start.patch
-#Patch11:    0012-Add-voicecall-support-to-the-qmimodem-driver.patch
 
 %define libglibutil_version 1.0.51
 
