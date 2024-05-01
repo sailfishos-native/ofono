@@ -201,10 +201,18 @@ index 550ce787..4a4d9d1b 100644
  	if (!r)
  		return -EINPROGRESS;
 diff --git a/plugins/udevng.c b/plugins/udevng.c
-index b9d115f1..3f72ec3f 100644
+index b9d115f1..e2d05619 100644
 --- a/plugins/udevng.c
 +++ b/plugins/udevng.c
-@@ -2085,6 +2085,12 @@ static void check_usb_device(struct udev_device *device)
+@@ -2049,6 +2049,7 @@ static struct {
+ 	{ "quectelqmi",	"qcserial",	"2c7c", "0121"	},
+ 	{ "quectelqmi",	"qmi_wwan",	"2c7c", "0125"	},
+ 	{ "quectelqmi",	"qcserial",	"2c7c", "0125"	},
++	{ "quectelqmi", "option",	"2c7c", "0125"	},
+ 	{ "quectelqmi",	"qmi_wwan",	"2c7c", "0195"	},
+ 	{ "quectelqmi",	"qcserial",	"2c7c", "0195"	},
+ 	{ "quectelqmi",	"qmi_wwan",	"2c7c", "0296"	},
+@@ -2085,6 +2086,12 @@ static void check_usb_device(struct udev_device *device)
  	const char *syspath, *devname, *driver;
  	const char *vendor = NULL, *model = NULL;
  	const char *kernel_driver;
@@ -217,7 +225,7 @@ index b9d115f1..3f72ec3f 100644
  
  	usb_device = udev_device_get_parent_with_subsystem_devtype(device,
  							"usb", "usb_device");
-@@ -2156,10 +2162,39 @@ static void check_usb_device(struct udev_device *device)
+@@ -2156,10 +2163,39 @@ static void check_usb_device(struct udev_device *device)
  
  		if (driver == NULL)
  			return;
