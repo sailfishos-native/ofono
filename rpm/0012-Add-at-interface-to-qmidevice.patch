@@ -135,7 +135,7 @@ index c6383a56..4b01b784 100644
 +
 +	DBG("DETECTED AT RING");
 +
-+	qmi_service_send(data->voice, QMI_VOICE_ALL_CALL_STATUS_IND, NULL,
++	qmi_service_send(data->voice, QMI_VOICE_GET_ALL_CALL_INFO, NULL,
 +				all_call_status_ind, vc, NULL);
 +
 +}
