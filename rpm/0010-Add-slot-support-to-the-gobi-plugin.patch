@@ -1,30 +1,20 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Adam Pigg <adam@piggz.co.uk>
-Date: Sun, 10 Mar 2024 12:25:57 +0000
-Subject: [PATCH 1/1] *mb2-prepare* Add slot support to the gobi plugin
-
-Mb2-scrape: filename=0010-Add-slot-support-to-the-gobi-plugin.patch
----
- plugins/gobi.c | 193 ++++++++++++++++++++++++++++++++++++++++++++++++-
- 1 file changed, 192 insertions(+), 1 deletion(-)
-
 diff --git a/plugins/gobi.c b/plugins/gobi.c
-index 431df17e..a12dba01 100644
+index 88e4c7fc..c1b30918 100644
 --- a/plugins/gobi.c
 +++ b/plugins/gobi.c
-@@ -52,6 +52,7 @@
+@@ -38,6 +38,7 @@
  #include <ofono/location-reporting.h>
  #include <ofono/log.h>
  #include <ofono/message-waiting.h>
 +#include <ofono/slot.h>
-
+ 
  #include <ell/ell.h>
-
-@@ -72,10 +73,34 @@
- #define GOBI_VOICE	(1 << 9)
- #define GOBI_WDA	(1 << 10)
-
-+#define IMEI_LEN 16
+ 
+@@ -54,6 +55,28 @@
+ #define GOBI_UIM	(1 << 5)
+ #define GOBI_VOICE	(1 << 6)
+ #define GOBI_WDA	(1 << 7)
++#define IMEI_LEN	16
 +
 +static char imei[IMEI_LEN] = "1234567890123456";
 +
@@ -46,19 +36,21 @@ index 431df17e..a12dba01 100644
 +static bool gobi_slot_plugin_start(void *user_data);
 +static void gobi_slot_driver_startup_check();
 +static void gobi_slot_set_sim_state(struct ofono_sim *sim);
-+
- struct gobi_data {
- 	struct qmi_device *device;
- 	struct qmi_service *dms;
- 	struct qmi_service *wda;
-+	struct ofono_sim *sim;
- 	unsigned long features;
- 	unsigned int discover_attempts;
- 	uint8_t oper_mode;
-@@ -94,6 +119,28 @@ static void gobi_debug(const char *str, void *user_data)
- 	ofono_info("%s%s", prefix, str);
+ 
+ struct service_request {
+ 	struct qmi_service **member;
+@@ -70,6 +93,7 @@ struct gobi_data {
+ 	struct qmi_service *voice;
+ 	struct qmi_service *pds;
+ 	struct qmi_service *uim;
++	struct ofono_sim   *sim;
+ 	struct service_request service_requests[16];
+ 	int cur_service_request;
+ 	int num_service_requests;
+@@ -99,6 +123,28 @@ static void gobi_io_debug(const char *str, void *user_data)
+ 	ofono_debug("%s%s", prefix, str);
  }
-
+ 
 +/*IMEI CALLBACK*/
 +static void gobi_get_ids_cb(struct qmi_result *result, void *user_data)
 +{
@@ -81,13 +73,13 @@ index 431df17e..a12dba01 100644
 +   qmi_free(str);
 +}
 +
- static int gobi_probe(struct ofono_modem *modem)
- {
- 	struct gobi_data *data;
-@@ -119,6 +166,11 @@ static int gobi_probe(struct ofono_modem *modem)
+ /*
+  * Probe the modem.  The following modem properties are expected to be set
+  * in order to initialize the driver properly:
+@@ -153,6 +199,11 @@ static int gobi_probe(struct ofono_modem *modem)
  	ofono_modem_set_data(modem, data);
  	ofono_modem_set_capabilities(modem, OFONO_MODEM_CAPABILITY_LTE);
-
+ 
 +	if (!global_modem) {
 +		global_modem = modem;
 +	}
@@ -95,19 +87,19 @@ index 431df17e..a12dba01 100644
 +    gobi_slot_plugin_start(gobi_ofono_slot_driver);
  	return 0;
  }
-
-@@ -146,6 +198,8 @@ static void gobi_remove(struct ofono_modem *modem)
-
+ 
+@@ -198,6 +249,8 @@ static void gobi_remove(struct ofono_modem *modem)
+ 
  	cleanup_services(data);
-
+ 
 +	ofono_slot_driver_unregister(gobi_ofono_slot_driver);
 +
- 	qmi_device_free(data->device);
-
+ 	qmi_qmux_device_free(data->device);
+ 
  	l_free(data);
-@@ -310,6 +364,11 @@ static void get_data_format_cb(struct qmi_result *result, void *user_data)
+@@ -402,6 +455,11 @@ static void get_data_format_cb(struct qmi_result *result, void *user_data)
  	}
-
+ 
  done:
 +
 +	/*Get modem IMEI*/
@@ -117,37 +109,42 @@ index 431df17e..a12dba01 100644
  	if (qmi_service_send(data->dms, QMI_DMS_GET_CAPS, NULL,
  						get_caps_cb, modem, NULL) > 0)
  		return;
-@@ -635,7 +694,7 @@ static void gobi_pre_sim(struct ofono_modem *modem)
- 		sim_driver = "qmimodem_legacy";
-
- 	if (sim_driver)
--		ofono_sim_create(modem, 0, sim_driver, data->device);
-+		data->sim = ofono_sim_create(modem, 0, sim_driver, data->device);
-
+@@ -734,11 +792,11 @@ static void gobi_pre_sim(struct ofono_modem *modem)
+ 	ofono_devinfo_create(modem, 0, "qmimodem", qmi_service_clone(data->dms));
+ 
+ 	if ((data->features & GOBI_UIM) && !legacy)
+-		ofono_sim_create(modem, 0, "qmimodem",
++		data->sim = ofono_sim_create(modem, 0, "qmimodem",
+ 						qmi_service_clone(data->dms),
+ 						qmi_service_clone(data->uim));
+ 	else /* DMS always available */
+-		ofono_sim_create(modem, 0, "qmimodem_legacy",
++		data->sim = ofono_sim_create(modem, 0, "qmimodem_legacy",
+ 						qmi_service_clone(data->dms));
+ 
  	if (data->features & GOBI_VOICE)
- 		ofono_voicecall_create(modem, 0, "qmimodem", data->device);
-@@ -643,6 +702,8 @@ static void gobi_pre_sim(struct ofono_modem *modem)
- 	if (data->features & GOBI_PDS)
+@@ -748,6 +806,8 @@ static void gobi_pre_sim(struct ofono_modem *modem)
+ 	if (data->features & GOBI_PDS) /* exclusive use, no need to clone */
  		ofono_location_reporting_create(modem, 0, "qmimodem",
- 							data->device);
+ 						l_steal_ptr(data->pds));
 +
 +	gobi_slot_set_sim_state(data->sim);
  }
-
+ 
  static void gobi_setup_gprs(struct ofono_modem *modem)
-@@ -742,6 +803,8 @@ static void gobi_post_sim(struct ofono_modem *modem)
-
+@@ -846,6 +906,8 @@ static void gobi_post_sim(struct ofono_modem *modem)
+ 
  	if (data->features & GOBI_WDS)
  		gobi_setup_gprs(modem);
 +
 +	gobi_slot_set_sim_state(data->sim);
  }
-
+ 
  static void gobi_post_online(struct ofono_modem *modem)
-@@ -764,6 +827,131 @@ static void gobi_post_online(struct ofono_modem *modem)
+@@ -873,6 +935,131 @@ static void gobi_post_online(struct ofono_modem *modem)
  	}
  }
-
+ 
 +// ========== Slot Driver ==========
 +
 +static GobiPlugin *gobi_slot_driver_init(struct ofono_slot_manager *m)

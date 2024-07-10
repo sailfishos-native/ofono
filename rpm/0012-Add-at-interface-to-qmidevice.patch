@@ -1,8 +1,8 @@
 diff --git a/drivers/qmimodem/qmi.c b/drivers/qmimodem/qmi.c
-index 69a0e535..d94c5498 100644
+index b8f46a5b..820553ac 100644
 --- a/drivers/qmimodem/qmi.c
 +++ b/drivers/qmimodem/qmi.c
-@@ -39,6 +39,7 @@
+@@ -26,6 +26,7 @@
  #include <ell/ell.h>
  
  #include <ofono/log.h>
@@ -10,16 +10,16 @@ index 69a0e535..d94c5498 100644
  
  #include "qmi.h"
  #include "ctl.h"
-@@ -106,6 +107,7 @@ struct qmi_device {
- 	bool writer_active : 1;
+@@ -119,6 +120,7 @@ struct qmi_qmux_device {
+ 	struct l_queue *control_queue;
  	bool shutting_down : 1;
  	bool destroyed : 1;
 +	GAtChat *atmodem;
  };
  
- struct qmi_device_qmux {
-@@ -1053,6 +1055,22 @@ bool qmi_device_has_service(struct qmi_device *device, uint16_t type)
- 	return __find_service_info_by_type(device, type);
+ struct service_family {
+@@ -930,6 +932,22 @@ bool qmi_qmux_device_has_service(struct qmi_qmux_device *qmux, uint16_t type)
+ 	return __qmux_service_info_find(qmux, type);
  }
  
 +void qmi_device_set_atmodem(struct qmi_device *device, GAtChat* atmodem)
@@ -38,14 +38,14 @@ index 69a0e535..d94c5498 100644
 +	return device->atmodem;
 +}
 +
- struct discover_data {
- 	struct discovery super;
- 	struct qmi_device *device;
+ static int qmi_qmux_device_write(struct qmi_transport *transport,
+ 					struct qmi_request *req)
+ {
 diff --git a/drivers/qmimodem/qmi.h b/drivers/qmimodem/qmi.h
-index 0075f738..7bc423aa 100644
+index 0e48313e..0de7f432 100644
 --- a/drivers/qmimodem/qmi.h
 +++ b/drivers/qmimodem/qmi.h
-@@ -21,6 +21,7 @@
+@@ -7,6 +7,7 @@
  
  #include <stdbool.h>
  #include <stdint.h>
@@ -53,21 +53,21 @@ index 0075f738..7bc423aa 100644
  
  #define QMI_SERVICE_CONTROL	0	/* Control service */
  #define QMI_SERVICE_WDS		1	/* Wireless data service */
-@@ -77,6 +78,9 @@ typedef void (*qmi_destroy_func_t)(void *user_data);
- 
- struct qmi_device;
+@@ -59,6 +60,9 @@ typedef void (*qmi_destroy_func_t)(void *user_data);
+ struct qmi_service;
+ struct qmi_result;
  
 +void qmi_device_set_atmodem(struct qmi_device *device, GAtChat* atmodem);
 +GAtChat* qmi_device_get_atmodem(struct qmi_device *device);
 +
  typedef void (*qmi_debug_func_t)(const char *str, void *user_data);
- typedef void (*qmi_shutdown_func_t)(void *user_data);
- typedef void (*qmi_discover_func_t)(void *user_data);
+ typedef void (*qmi_qmux_device_discover_func_t)(void *user_data);
+ typedef void (*qmi_qmux_device_create_client_func_t)(struct qmi_service *,
 diff --git a/drivers/qmimodem/sms.c b/drivers/qmimodem/sms.c
-index c6252d9d..f8882ab9 100644
+index 3e2bef6e..b2519b05 100644
 --- a/drivers/qmimodem/sms.c
 +++ b/drivers/qmimodem/sms.c
-@@ -30,6 +30,8 @@
+@@ -16,6 +16,8 @@
  #include <ofono/modem.h>
  #include <ofono/sms.h>
  
@@ -76,7 +76,7 @@ index c6252d9d..f8882ab9 100644
  #include "qmi.h"
  #include "wms.h"
  #include "util.h"
-@@ -776,6 +778,15 @@ static void create_wms_cb(struct qmi_service *service, void *user_data)
+@@ -714,6 +716,15 @@ static void set_event_cb(struct qmi_result *result, void *user_data)
  	ofono_sms_register(sms);
  }
  
@@ -92,9 +92,9 @@ index c6252d9d..f8882ab9 100644
  static int qmi_sms_probe(struct ofono_sms *sms,
  				unsigned int vendor, void *user_data)
  {
-@@ -790,6 +801,12 @@ static int qmi_sms_probe(struct ofono_sms *sms,
+@@ -740,6 +751,12 @@ static int qmi_sms_probe(struct ofono_sms *sms,
  
- 	qmi_service_create(device, QMI_SERVICE_WMS, create_wms_cb, sms, NULL);
+ 	ofono_sms_set_data(sms, data);
  
 +	GAtChat* atmodem = qmi_device_get_atmodem(device);
 +	if (atmodem) {
@@ -106,10 +106,10 @@ index c6252d9d..f8882ab9 100644
  }
  
 diff --git a/drivers/qmimodem/voicecall.c b/drivers/qmimodem/voicecall.c
-index c6383a56..4b01b784 100644
+index aed662da..2e996e95 100644
 --- a/drivers/qmimodem/voicecall.c
 +++ b/drivers/qmimodem/voicecall.c
-@@ -24,12 +24,15 @@
+@@ -10,12 +10,15 @@
  #include <config.h>
  #endif
  
@@ -125,8 +125,8 @@ index c6383a56..4b01b784 100644
  #include "voice.h"
  
  #include "qmi.h"
-@@ -750,6 +753,17 @@ static void create_voice_cb(struct qmi_service *service, void *user_data)
- 	ofono_voicecall_register(vc);
+@@ -707,6 +710,17 @@ static void send_dtmf(struct ofono_voicecall *vc, const char *dtmf,
+ 	send_one_dtmf(vc, *dtmf, send_one_dtmf_cb, vd);
  }
  
 +static void qmi_voicecall_ring_notify(GAtResult *result, gpointer user_data) {
@@ -143,9 +143,9 @@ index c6383a56..4b01b784 100644
  static int qmi_voicecall_probe(struct ofono_voicecall *vc,
  					unsigned int vendor, void *user_data)
  {
-@@ -766,6 +780,15 @@ static int qmi_voicecall_probe(struct ofono_voicecall *vc,
- 	qmi_service_create(device, QMI_SERVICE_VOICE,
- 					create_voice_cb, vc, NULL);
+@@ -724,6 +738,15 @@ static int qmi_voicecall_probe(struct ofono_voicecall *vc,
+ 
+ 	ofono_voicecall_set_data(vc, data);
  
 +	//Get a handle to the modem serial interface to detect RING signals
 +	//Sometimes the QMI notify doesnt come through if the phone is
@@ -160,10 +160,10 @@ index c6383a56..4b01b784 100644
  }
  
 diff --git a/plugins/gobi.c b/plugins/gobi.c
-index 550ce787..4a4d9d1b 100644
+index c1b30918..c77094a5 100644
 --- a/plugins/gobi.c
 +++ b/plugins/gobi.c
-@@ -29,6 +29,7 @@
+@@ -15,6 +15,7 @@
  #include <stdlib.h>
  #include <stdio.h>
  #include <net/if.h>
@@ -171,7 +171,7 @@ index 550ce787..4a4d9d1b 100644
  
  #define OFONO_API_SUBJECT_TO_CHANGE
  #include <ofono/plugin.h>
-@@ -60,6 +61,12 @@
+@@ -47,6 +48,12 @@
  #include <drivers/qmimodem/wda.h>
  #include <drivers/qmimodem/util.h>
  
@@ -184,9 +184,9 @@ index 550ce787..4a4d9d1b 100644
  #define GOBI_DMS	(1 << 0)
  #define GOBI_NAS	(1 << 1)
  #define GOBI_WMS	(1 << 2)
-@@ -448,6 +455,15 @@ static int gobi_enable(struct ofono_modem *modem)
- 	if (getenv("OFONO_QMI_DEBUG"))
- 		qmi_device_set_debug(data->device, gobi_debug, "QMI: ");
+@@ -614,6 +621,15 @@ static int gobi_enable(struct ofono_modem *modem)
+ 		qmi_qmux_device_set_io_debug(data->device,
+ 						gobi_io_debug, "QMI: ");
  
 +	//Get a handle to an AT interface if one was found, and attach it to the qmi_device
 +	GAtChat *atchat = at_util_open_device(modem, "Aux", NULL, "Aux: ", NULL);
@@ -197,22 +197,22 @@ index 550ce787..4a4d9d1b 100644
 +	}
 +	qmi_device_set_atmodem(data->device, atchat); //Will set to NULL if doesnt exist
 +
- 	r = qmi_device_discover(data->device, discover_cb, modem, NULL);
+ 	r = qmi_qmux_device_discover(data->device, discover_cb, modem, NULL);
  	if (!r)
  		return -EINPROGRESS;
 diff --git a/plugins/udevng.c b/plugins/udevng.c
-index b9d115f1..e2d05619 100644
+index 1c56e2ea..b089a227 100644
 --- a/plugins/udevng.c
 +++ b/plugins/udevng.c
-@@ -2049,6 +2049,7 @@ static struct {
+@@ -2149,6 +2149,7 @@ static struct {
  	{ "quectelqmi",	"qcserial",	"2c7c", "0121"	},
  	{ "quectelqmi",	"qmi_wwan",	"2c7c", "0125"	},
  	{ "quectelqmi",	"qcserial",	"2c7c", "0125"	},
 +	{ "quectelqmi", "option",	"2c7c", "0125"	},
  	{ "quectelqmi",	"qmi_wwan",	"2c7c", "0195"	},
  	{ "quectelqmi",	"qcserial",	"2c7c", "0195"	},
- 	{ "quectelqmi",	"qmi_wwan",	"2c7c", "0296"	},
-@@ -2085,6 +2086,12 @@ static void check_usb_device(struct udev_device *device)
+ 	{ "quectelqmi",	"option",	"2c7c", "0195"	},
+@@ -2187,6 +2188,12 @@ static void check_usb_device(struct udev_device *device)
  	const char *syspath, *devname, *driver;
  	const char *vendor = NULL, *model = NULL;
  	const char *kernel_driver;
@@ -225,7 +225,7 @@ index b9d115f1..e2d05619 100644
  
  	usb_device = udev_device_get_parent_with_subsystem_devtype(device,
  							"usb", "usb_device");
-@@ -2156,10 +2163,39 @@ static void check_usb_device(struct udev_device *device)
+@@ -2258,10 +2265,39 @@ static void check_usb_device(struct udev_device *device)
  
  		if (driver == NULL)
  			return;
