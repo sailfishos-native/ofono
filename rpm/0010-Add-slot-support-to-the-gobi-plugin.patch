@@ -70,7 +70,7 @@ index 88e4c7fc..c1b30918 100644
 +			gobi_slot_driver_startup_check();
 +		}
 +	}
-+   qmi_free(str);
++   l_free(str);
 +}
 +
  /*
