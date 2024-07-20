@@ -1,0 +1,40 @@
+diff --git a/Makefile.am b/Makefile.am
+index 1876e489..91dc869c 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -884,7 +884,7 @@ unit_objects += $(unit_test_common_OBJECTS)
+ 
+ unit_test_cell_info_SOURCES = unit/test-cell-info.c src/cell-info.c src/log.c
+ unit_test_cell_info_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT)
+-unit_test_cell_info_LDADD = @GLIB_LIBS@ -ldl
++unit_test_cell_info_LDADD = @GLIB_LIBS@ -ldl $(ell_ldadd)
+ unit_objects += $(unit_test_cell_info_OBJECTS)
+ unit_tests += unit/test-cell-info
+ 
+@@ -892,7 +892,7 @@ unit_test_cell_info_control_SOURCES = unit/test-cell-info-control.c \
+ 			unit/fake_cell_info.c src/cell-info.c \
+ 			src/cell-info-control.c src/log.c
+ unit_test_cell_info_control_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT)
+-unit_test_cell_info_control_LDADD = @GLIB_LIBS@ -ldl
++unit_test_cell_info_control_LDADD = @GLIB_LIBS@ -ldl $(ell_ldadd)
+ unit_objects += $(unit_test_cell_info_control_OBJECTS)
+ unit_tests += unit/test-cell-info-control
+ 
+@@ -903,7 +903,7 @@ unit_test_cell_info_dbus_SOURCES = unit/test-dbus.c \
+ 			src/dbus-clients.c src/dbus.c src/log.c
+ unit_test_cell_info_dbus_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT) \
+ 			@DBUS_GLIB_CFLAGS@
+-unit_test_cell_info_dbus_LDADD = @DBUS_GLIB_LIBS@ @GLIB_LIBS@ -ldl
++unit_test_cell_info_dbus_LDADD = @DBUS_GLIB_LIBS@ @GLIB_LIBS@ -ldl $(ell_ldadd)
+ unit_objects += $(unit_test_cell_info_dbus_OBJECTS)
+ unit_tests += unit/test-cell-info-dbus
+ 
+@@ -1010,7 +1010,7 @@ unit_test_dbus_clients_SOURCES = unit/test-dbus-clients.c unit/test-dbus.c \
+ 				src/dbus-clients.c gdbus/object.c \
+ 				src/dbus.c src/log.c
+ unit_test_dbus_clients_CFLAGS =  @DBUS_GLIB_CFLAGS@ $(COVERAGE_OPT) $(AM_CFLAGS)
+-unit_test_dbus_clients_LDADD = @DBUS_GLIB_LIBS@ @GLIB_LIBS@ -ldl
++unit_test_dbus_clients_LDADD = @DBUS_GLIB_LIBS@ @GLIB_LIBS@ -ldl $(ell_ldadd)
+ unit_objects += $(unit_test_dbus_clients_OBJECTS)
+ unit_tests += unit/test-dbus-clients
+ 
