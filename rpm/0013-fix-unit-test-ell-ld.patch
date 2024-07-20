@@ -1,5 +1,5 @@
 diff --git a/Makefile.am b/Makefile.am
-index 1876e489..6d541b96 100644
+index 1876e489..090791d9 100644
 --- a/Makefile.am
 +++ b/Makefile.am
 @@ -884,7 +884,7 @@ unit_objects += $(unit_test_common_OBJECTS)
@@ -47,6 +47,15 @@ index 1876e489..6d541b96 100644
  unit_objects += $(unit_test_dbus_queue_OBJECTS)
  unit_tests += unit/test-dbus-queue
  
+@@ -1026,7 +1026,7 @@ if SAILFISH_ACCESS
+ unit_test_sailfish_access_SOURCES = unit/test-sailfish_access.c \
+ 			plugins/sailfish_access.c src/dbus-access.c src/log.c
+ unit_test_sailfish_access_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT)
+-unit_test_sailfish_access_LDADD = @GLIB_LIBS@ -ldl
++unit_test_sailfish_access_LDADD = @GLIB_LIBS@ -ldl $(ell_ldadd)
+ unit_objects += $(unit_test_sailfish_access_OBJECTS)
+ unit_tests += unit/test-sailfish_access
+ endif
 @@ -1034,7 +1034,7 @@ endif
  unit_test_dbus_access_SOURCES = unit/test-dbus-access.c src/dbus-access.c \
  			src/log.c
