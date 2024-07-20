@@ -1,0 +1,13 @@
+diff --git a/Makefile.am b/Makefile.am
+index 1876e489..9aae27b6 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -884,7 +884,7 @@ unit_objects += $(unit_test_common_OBJECTS)
+ 
+ unit_test_cell_info_SOURCES = unit/test-cell-info.c src/cell-info.c src/log.c
+ unit_test_cell_info_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT)
+-unit_test_cell_info_LDADD = @GLIB_LIBS@ -ldl
++unit_test_cell_info_LDADD = @GLIB_LIBS@ -ldl $(ell_ldadd)
+ unit_objects += $(unit_test_cell_info_OBJECTS)
+ unit_tests += unit/test-cell-info
+ 
