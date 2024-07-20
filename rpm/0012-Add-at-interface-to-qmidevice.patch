@@ -1,5 +1,5 @@
 diff --git a/drivers/qmimodem/qmi.c b/drivers/qmimodem/qmi.c
-index b8f46a5b..1ac53a8f 100644
+index b8f46a5b..5e8ffaf5 100644
 --- a/drivers/qmimodem/qmi.c
 +++ b/drivers/qmimodem/qmi.c
 @@ -26,6 +26,7 @@
@@ -10,39 +10,39 @@ index b8f46a5b..1ac53a8f 100644
  
  #include "qmi.h"
  #include "ctl.h"
-@@ -119,6 +120,7 @@ struct qmi_qmux_device {
- 	struct l_queue *control_queue;
- 	bool shutting_down : 1;
- 	bool destroyed : 1;
+@@ -92,6 +93,7 @@ struct qmi_transport {
+ 	const struct qmi_transport_ops *ops;
+ 	struct debug_data debug;
+ 	bool writer_active : 1;
 +	GAtChat *atmodem;
  };
  
- struct service_family {
+ struct qmi_qmux_device {
 @@ -930,6 +932,22 @@ bool qmi_qmux_device_has_service(struct qmi_qmux_device *qmux, uint16_t type)
  	return __qmux_service_info_find(qmux, type);
  }
  
 +void qmi_device_set_atmodem(struct qmi_qmux_evice *device, GAtChat* atmodem)
 +{
-+	if (device == NULL)
++	if (device == NULL || device->transport == NULL)
 +		return;
 +
-+	device->atmodem = atmodem;
++	device->transport->atmodem = atmodem;
 +}
 +
-+GAtChat* qmi_device_get_atmodem(struct qmi_qmux_device *device)
++GAtChat* qmi_device_get_atmodem(struct qmi_service *service)
 +{
-+	if (device == NULL)
++	if (service == NULL || service->family->transport == NULL)
 +		return NULL;
 +
-+	return device->atmodem;
++	return service=>family->transport->atmodem;
 +}
 +
  static int qmi_qmux_device_write(struct qmi_transport *transport,
  					struct qmi_request *req)
  {
 diff --git a/drivers/qmimodem/qmi.h b/drivers/qmimodem/qmi.h
-index 0e48313e..18753a7b 100644
+index 0e48313e..3fd98100 100644
 --- a/drivers/qmimodem/qmi.h
 +++ b/drivers/qmimodem/qmi.h
 @@ -7,6 +7,7 @@
@@ -58,13 +58,13 @@ index 0e48313e..18753a7b 100644
  struct qmi_result;
  
 +void qmi_device_set_atmodem(struct qmi_qmux_device *device, GAtChat* atmodem);
-+GAtChat* qmi_device_get_atmodem(struct qmi_qmux_device *device);
++GAtChat* qmi_device_get_atmodem(struct qmi_service *service);
 +
  typedef void (*qmi_debug_func_t)(const char *str, void *user_data);
  typedef void (*qmi_qmux_device_discover_func_t)(void *user_data);
  typedef void (*qmi_qmux_device_create_client_func_t)(struct qmi_service *,
 diff --git a/drivers/qmimodem/sms.c b/drivers/qmimodem/sms.c
-index 3e2bef6e..b2519b05 100644
+index 3e2bef6e..5d9446c1 100644
 --- a/drivers/qmimodem/sms.c
 +++ b/drivers/qmimodem/sms.c
 @@ -16,6 +16,8 @@
@@ -96,7 +96,7 @@ index 3e2bef6e..b2519b05 100644
  
  	ofono_sms_set_data(sms, data);
  
-+	GAtChat* atmodem = qmi_device_get_atmodem(device);
++	GAtChat* atmodem = qmi_device_get_atmodem(wms->family->transport);
 +	if (atmodem) {
 +		guint ret = g_at_chat_register(atmodem, "+CMTI:", qmi_sms_at_notify, FALSE, sms, NULL);
 +		DBG("SMS AT CHAT REGISTER %d", ret);
@@ -106,7 +106,7 @@ index 3e2bef6e..b2519b05 100644
  }
  
 diff --git a/drivers/qmimodem/voicecall.c b/drivers/qmimodem/voicecall.c
-index aed662da..2e996e95 100644
+index aed662da..0ba9d4fd 100644
 --- a/drivers/qmimodem/voicecall.c
 +++ b/drivers/qmimodem/voicecall.c
 @@ -10,12 +10,15 @@
@@ -150,7 +150,7 @@ index aed662da..2e996e95 100644
 +	//Get a handle to the modem serial interface to detect RING signals
 +	//Sometimes the QMI notify doesnt come through if the phone is
 +	//asleep
-+	GAtChat* atmodem = qmi_device_get_atmodem(device);
++	GAtChat* atmodem = qmi_device_get_atmodem(voice->family->transport);
 +	if (atmodem) {
 +		guint ret = g_at_chat_register(atmodem, "RING", qmi_voicecall_ring_notify, FALSE, vc, NULL);
 +		DBG("VOICE AT CHAT REGISTER %d", ret);
@@ -160,7 +160,7 @@ index aed662da..2e996e95 100644
  }
  
 diff --git a/plugins/gobi.c b/plugins/gobi.c
-index c1b30918..c77094a5 100644
+index c1b30918..49e54484 100644
 --- a/plugins/gobi.c
 +++ b/plugins/gobi.c
 @@ -15,6 +15,7 @@
@@ -195,7 +195,7 @@ index c1b30918..c77094a5 100644
 +	} else {
 +		DBG("Have atmodem");
 +	}
-+	qmi_device_set_atmodem(data->device, atchat); //Will set to NULL if doesnt exist
++	qmi_device_set_atmodem(data->device->transport, atchat); //Will set to NULL if doesnt exist
 +
  	r = qmi_qmux_device_discover(data->device, discover_cb, modem, NULL);
  	if (!r)
