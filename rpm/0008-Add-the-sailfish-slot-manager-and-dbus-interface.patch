@@ -1488,7 +1488,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..c0e5088b9bf035ce13e1e4ba46c07472fc2b3ac5
 --- /dev/null
 +++ b/src/slot-manager.c
-@@ -0,0 +1,1551 @@
+@@ -0,0 +1,1540 @@
 +/*
 + *  oFono - Open Source Telephony
 + *
@@ -2408,19 +2408,13 @@ index 0000000000000000000000000000000000000000..c0e5088b9bf035ce13e1e4ba46c07472
 +{
 +	OfonoSlotManagerObject *mgr = OFONO_SLOT_MANAGER_OBJECT(user_data);
 +
-+	mgr->init_countdown--;
-+	if (!mgr->init_countdown) {
-+		mgr->init_id = 0;
-+		DBG("done with registrations");
-+		slot_manager_foreach_driver(mgr,
-+			slot_manager_start_driver_cb, NULL);
-+		slot_manager_update_ready(mgr);
-+		slot_manager_emit_queued_signals(mgr);
-+		return G_SOURCE_REMOVE;
-+	} else {
-+		/* Keep on waiting */
-+		return G_SOURCE_CONTINUE;
-+	}
++	mgr->init_id = 0;
++	DBG("done with registrations");
++	slot_manager_foreach_driver(mgr,
++		slot_manager_start_driver_cb, NULL);
++	slot_manager_update_ready(mgr);
++	slot_manager_emit_queued_signals(mgr);
++	return G_SOURCE_REMOVE;
 +}
 +
 +static void slot_driver_reg_free(OfonoSlotDriverReg *r)
@@ -2440,17 +2434,13 @@ index 0000000000000000000000000000000000000000..c0e5088b9bf035ce13e1e4ba46c07472
 +	(OfonoSlotManagerObject *mgr, const struct ofono_slot_driver *d)
 +{
 +	/* Only allow registrations at startup */
-+	if (mgr->init_countdown) {
 +		OfonoSlotDriverReg *reg = g_new0(OfonoSlotDriverReg, 1);
 +
-+		reg->manager = mgr;
-+		reg->driver = d;
-+		mgr->drivers = g_slist_append(mgr->drivers, reg);
-+		return reg;
-+	} else {
-+		ofono_error("Refusing to register slot driver %s", d->name);
-+		return NULL;
-+	}
++	reg->manager = mgr;
++	reg->driver = d;
++	mgr->drivers = g_slist_append(mgr->drivers, reg);
++	slot_manager_init_countdown_cb(mgr);
++	return reg;
 +}
 +
 +static gboolean ofono_slot_manager_detach(OfonoSlotObject *s, void *p)
@@ -2935,7 +2925,6 @@ index 0000000000000000000000000000000000000000..c0e5088b9bf035ce13e1e4ba46c07472
 +
 +	/* Delay the initialization until after all drivers get registered */
 +	mgr->init_countdown = SM_INIT_IDLE_COUNT;
-+	mgr->init_id = g_idle_add(slot_manager_init_countdown_cb, mgr);
 +
 +	/* And block all requests until that happens */
 +	mgr->dbus = slot_manager_dbus_new(&mgr->pub, &dbus_cb);
