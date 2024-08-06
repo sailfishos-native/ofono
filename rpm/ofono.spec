@@ -19,6 +19,7 @@ Patch9:     0010-Add-slot-support-to-the-gobi-plugin.patch
 Patch10:    0011-Add-sailfish-arguments-to-the-systemd-unit-and-start.patch
 Patch11:    0012-Add-at-interface-to-qmidevice.patch
 Patch12:    0013-fix-unit-test-ell-ld.patch
+Patch13:    0014-qmi-allow-discover-from-callback.patch
 
 %define libglibutil_version 1.0.51
 
