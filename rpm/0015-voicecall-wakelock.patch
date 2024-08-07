@@ -1,5 +1,5 @@
 diff --git a/src/voicecall.c b/src/voicecall.c
-index b77275fe..ecffb097 100644
+index b77275fe..e48d5ad3 100644
 --- a/src/voicecall.c
 +++ b/src/voicecall.c
 @@ -113,6 +113,55 @@ static void hangup_all_active(const struct ofono_error *error, void *data);
@@ -88,3 +88,15 @@ index b77275fe..ecffb097 100644
  	}
  
  	if (status == CALL_STATUS_DISCONNECTED && call->vc->dial_req &&
+@@ -2353,6 +2411,11 @@ void ofono_voicecall_disconnected(struct ofono_voicecall *vc, int id,
+ 	voicecall_dbus_unregister(vc, call);
+ 
+ 	vc->call_list = g_slist_remove(vc->call_list, call);
++
++	if (g_slist_length(vc->call_list) == 0) {
++		if (!lock_unlock())
++			ofono_error("Unable to release wakelock");
++	}
+ }
+ 
+ void ofono_voicecall_notify(struct ofono_voicecall *vc,
