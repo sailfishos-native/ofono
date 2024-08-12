@@ -1,0 +1,60 @@
+diff --git a/plugins/udevng.c b/plugins/udevng.c
+index b089a227..bd7af523 100644
+--- a/plugins/udevng.c
++++ b/plugins/udevng.c
+@@ -65,6 +65,45 @@ struct serial_device_info {
+ 	struct udev_device *dev;
+ };
+ 
++/** Sysfs/wakelock support */
++static const char sysfs_lock_path[] = "/sys/power/wake_lock";
++static const char lock_name[] = "ofono_udevng_add 15000000000";
++static bool sysfs_write(const char *path, const char *data, int size);
++
++/** Helper for writing to sysfs files
++ */
++static bool
++sysfs_write(const char *path, const char *data, int size)
++{
++	bool res = false;
++	int  fd  = -1;
++
++	if( !path || !data || size <= 0 )
++		goto cleanup;
++
++	if( (fd = open(path, O_WRONLY)) == -1 )
++		goto cleanup;
++
++	if( write(fd, data, size) == -1 )
++		goto cleanup;
++
++	res = true;
++
++	cleanup:
++	if( fd != -1 ) close(fd);
++
++	return res;
++}
++
++/** Async signal safe wakelock obtain
++ */
++static bool
++lock_lock(void)
++{
++	return sysfs_write(sysfs_lock_path, lock_name,
++					   sizeof lock_name - 1);
++}
++
+ static const char *get_ifname(const struct device_info *info)
+ {
+ 	struct udev_device *udev_device = info->udev_device;
+@@ -2001,6 +2040,9 @@ static void add_device(const char *modem_syspath, const char *modem_devname,
+ 	if (udev_device_get_syspath(device) == NULL)
+ 		return;
+ 
++	if( !lock_lock() )
++		ofono_error("failed to obtain wakelock for add_device");
++
+ 	modem = g_hash_table_lookup(modem_list, modem_syspath);
+ 	if (modem == NULL) {
+ 		modem = g_new0(struct modem_info, 1);
