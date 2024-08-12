@@ -1,8 +1,17 @@
 diff --git a/plugins/udevng.c b/plugins/udevng.c
-index b089a227..bd7af523 100644
+index b089a227..ed830c95 100644
 --- a/plugins/udevng.c
 +++ b/plugins/udevng.c
-@@ -65,6 +65,45 @@ struct serial_device_info {
+@@ -20,6 +20,8 @@
+ #include <glib.h>
+ #include <ell/ell.h>
+ 
++#include <fcntl.h>
++
+ #define OFONO_API_SUBJECT_TO_CHANGE
+ #include <ofono/plugin.h>
+ #include <ofono/modem.h>
+@@ -65,6 +67,45 @@ struct serial_device_info {
  	struct udev_device *dev;
  };
  
@@ -48,7 +57,7 @@ index b089a227..bd7af523 100644
  static const char *get_ifname(const struct device_info *info)
  {
  	struct udev_device *udev_device = info->udev_device;
-@@ -2001,6 +2040,9 @@ static void add_device(const char *modem_syspath, const char *modem_devname,
+@@ -2001,6 +2042,9 @@ static void add_device(const char *modem_syspath, const char *modem_devname,
  	if (udev_device_get_syspath(device) == NULL)
  		return;
  
