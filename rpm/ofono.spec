@@ -1,6 +1,6 @@
 Name:       ofono
 Summary:    Open Source Telephony
-Version:    2.9
+Version:    2.10
 Release:    1
 License:    GPLv2
 URL:        https://github.com/sailfishos/ofono
@@ -19,9 +19,8 @@ Patch9:     0010-Add-slot-support-to-the-gobi-plugin.patch
 Patch10:    0011-Add-sailfish-arguments-to-the-systemd-unit-and-start.patch
 Patch11:    0012-Add-at-interface-to-qmidevice.patch
 Patch12:    0013-fix-unit-test-ell-ld.patch
-Patch13:    0014-qmi-allow-discover-from-callback.patch
-Patch14:    0015-voicecall-wakelock.patch
-Patch15:    0016-udevng-wakelock.patch
+Patch13:    0015-voicecall-wakelock.patch
+Patch14:    0016-udevng-wakelock.patch
 
 %define libglibutil_version 1.0.51
 
