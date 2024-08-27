@@ -59,7 +59,7 @@ BuildRequires:  pkgconfig(systemd)
 BuildRequires:  libtool
 BuildRequires:  automake
 BuildRequires:  autoconf
-BuildRequires:  ell-devel >= 0.62.0
+BuildRequires:  ell-devel >= 0.68
 
 %description
 Telephony stack
