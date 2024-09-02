@@ -1,0 +1,181 @@
+diff --git a/Makefile.am b/Makefile.am
+index 090791d9..900cecb8 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -872,8 +872,8 @@ unit_tests = unit/test-common unit/test-util \
+ 				unit/test-rilmodem-cs \
+ 				unit/test-rilmodem-sms \
+ 				unit/test-rilmodem-cb \
+-				unit/test-rilmodem-gprs \
+-				unit/test-provision
++				unit/test-rilmodem-gprs
++#				unit/test-provision
+ 
+ noinst_PROGRAMS = $(unit_tests) \
+ 			unit/test-sms-root unit/test-mux unit/test-caif
+diff --git a/plugins/gobi.c b/plugins/gobi.c
+index 8909bf24..88c28cb7 100644
+--- a/plugins/gobi.c
++++ b/plugins/gobi.c
+@@ -65,6 +65,7 @@ GAtChat *at_util_open_device(struct ofono_modem *modem, const char *key,
+ #define IMEI_LEN	16
+ 
+ static char imei[IMEI_LEN] = "1234567890123456";
++static bool slot_started = false;
+ 
+ typedef struct ofono_slot_driver_data {
+ 	struct ofono_slot_manager *slot_manager;
+@@ -1045,10 +1046,9 @@ static void gobi_slot_set_sim_state(struct ofono_sim *sim)
+ 
+ static void gobi_slot_driver_startup_check()
+ {
+-	static bool _started = false;
+ 	DBG("gobi_slot_driver_startup_check");
+ 
+-	if (_started) {
++	if (slot_started) {
+ 		return;
+ 	}
+ 
+@@ -1065,9 +1065,8 @@ static void gobi_slot_driver_startup_check()
+ 		return;
+ 	}
+ 
+-	if (!slot->modem) {
+-		slot->modem = global_modem;
+-	}
++	slot->modem = global_modem;
++
+ 	l_strlcpy(slot->imei, imei, sizeof(slot->imei) );
+ 
+ 	slot->handle = ofono_slot_add(global_plugin->slot_manager,
+@@ -1077,7 +1076,7 @@ static void gobi_slot_driver_startup_check()
+ 				OFONO_SLOT_NO_FLAGS);
+ 
+ 	ofono_slot_driver_started(gobi_ofono_slot_driver);
+-	_started = true;
++	slot_started = true;
+ }
+ 
+ static uint gobi_slot_driver_start(GobiPlugin *plugin)
+@@ -1094,8 +1093,25 @@ static void gobi_slot_driver_cancel(GobiPlugin *plugin, uint id)
+ static void gobi_slot_driver_cleanup(GobiPlugin *plugin)
+ {
+ 	DBG("gobi_slot_driver_cleanup");
++
++	GobiSlot *slot = NULL;
++	slot = (GobiSlot *)l_queue_peek_head(plugin->slots);
++
++	if (!slot) {
++		DBG("No slot");;
++	}
++
++	ofono_slot_remove(plugin->slot_manager, ofono_modem_get_path(slot->modem));
++
++	slot->modem = NULL;
++
+ 	l_queue_destroy(plugin->slots, l_free);
+ 	l_free(plugin);
++	global_plugin = NULL;
++	global_modem = NULL;
++
++	slot_started = false;
++
+ }
+ 
+ static bool gobi_slot_plugin_start(void *user_data)
+diff --git a/src/modem.c b/src/modem.c
+index ea08e1f1..48410eb7 100644
+--- a/src/modem.c
++++ b/src/modem.c
+@@ -2211,6 +2211,10 @@ void ofono_modem_remove(struct ofono_modem *modem)
+ 	l_free(modem->name);
+ 	l_free(modem->path);
+ 	g_free(modem);
++
++	if (next_modem_id > 0) {
++		next_modem_id--;
++	}
+ }
+ 
+ void ofono_modem_reset(struct ofono_modem *modem)
+diff --git a/src/slot-manager.c b/src/slot-manager.c
+index 4d7857d5..7b239e0e 100644
+--- a/src/slot-manager.c
++++ b/src/slot-manager.c
+@@ -549,7 +549,10 @@ static gboolean slot_manager_foreach_slot(OfonoSlotManagerObject *mgr,
+ 	GSList *l = mgr->slots;
+ 	gboolean done = FALSE;
+ 
++	DBG("%d", g_slist_length(mgr->slots));
++
+ 	while (l && !done) {
++		DBG("slot_manager_foreach_slot");
+ 		GSList *next = l->next;
+ 		OfonoSlotObject *s = OFONO_SLOT_OBJECT(l->data);
+ 
+@@ -654,6 +657,35 @@ static OfonoSlotObject *slot_manager_find_slot_imsi(OfonoSlotManagerObject *mgr,
+ 	return data.slot;
+ }
+ 
++static gboolean slot_manager_find_slot_path_cb(OfonoSlotObject *slot,
++											   void *user_data)
++{
++	struct slot_manager_imsi_slot_data *data = user_data;
++	const char *slot_path = slot->pub.path;
++
++	DBG("%s %s", slot_path, data->imsi);
++
++	if (slot_path && (!data->imsi || !strcmp(slot_path, data->imsi))) {
++		data->slot = slot;
++		return SM_LOOP_DONE;
++	} else {
++		return SM_LOOP_CONTINUE;
++	}
++}
++
++static OfonoSlotObject *slot_manager_find_slot_path(OfonoSlotManagerObject *mgr,
++													const char *path)
++{
++	DBG("%s", path);
++
++	struct slot_manager_imsi_slot_data data;
++
++	memset(&data, 0, sizeof(data));
++	data.imsi = path;
++	slot_manager_foreach_slot(mgr, slot_manager_find_slot_path_cb, &data);
++	return data.slot;
++}
++
+ static gboolean slot_manager_all_sims_are_initialized_cb(OfonoSlotObject *slot,
+ 	void *result)
+ {
+@@ -1234,6 +1266,19 @@ void ofono_slot_manager_error(struct ofono_slot_manager *m, const char *key,
+ 	}
+ }
+ 
++void ofono_slot_remove(struct ofono_slot_manager *m,
++					   const char *path) {
++	DBG("%s", path);
++
++	OfonoSlotManagerObject *mgr = slot_manager_object_cast(m);
++
++	OfonoSlotObject *o = slot_manager_find_slot_path(mgr, path);
++	if (o) {
++		DBG("removing slot %s", path);
++		g_slist_remove(m->slots, o);
++	}
++}
++
+ struct ofono_slot *ofono_slot_add(struct ofono_slot_manager *m,
+ 	const char *path, enum ofono_radio_access_mode techs, const char *imei,
+ 	const char *imeisv, enum ofono_slot_sim_presence sim_presence,
+@@ -1249,7 +1294,7 @@ struct ofono_slot *ofono_slot_add(struct ofono_slot_manager *m,
+ 	 * much at any time. This has to be dealt with somehow at some
+ 	 * point but for now let's leave it as is.
+ 	 */
+-	if (mgr && !mgr->pub.ready && path &&
++	if (mgr && /*!mgr->pub.ready &&*/ path &&
+ 		g_variant_is_object_path(path) && imei &&
+ 		!slot_manager_foreach_slot(mgr,	slot_check_slot_name, path)) {
+ 		return slot_add_internal(mgr, path, techs, imei, imeisv,

@@ -21,6 +21,7 @@ Patch11:    0012-Add-at-interface-to-qmidevice.patch
 Patch12:    0013-fix-unit-test-ell-ld.patch
 Patch13:    0015-voicecall-wakelock.patch
 Patch14:    0016-udevng-wakelock.patch
+Patch16:    0017-hack-slot-remove-support.patch
 
 %define libglibutil_version 1.0.51
 
