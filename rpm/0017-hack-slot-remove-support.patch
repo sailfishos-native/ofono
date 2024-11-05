@@ -100,10 +100,18 @@ index ea08e1f1..48410eb7 100644
  
  void ofono_modem_reset(struct ofono_modem *modem)
 diff --git a/src/slot-manager.c b/src/slot-manager.c
-index 4d7857d5..7b239e0e 100644
+index 4d7857d5..96a7ee75 100644
 --- a/src/slot-manager.c
 +++ b/src/slot-manager.c
-@@ -549,7 +549,10 @@ static gboolean slot_manager_foreach_slot(OfonoSlotManagerObject *mgr,
+@@ -101,6 +101,7 @@ struct ofono_slot_manager_object {
+ 	GKeyFile *storage;
+ 	GHashTable *errors;
+ 	guint start_id;
++	struct l_timeout *init_timeout;
+ };
+ 
+ struct ofono_slot_driver_reg {
+@@ -549,7 +550,10 @@ static gboolean slot_manager_foreach_slot(OfonoSlotManagerObject *mgr,
  	GSList *l = mgr->slots;
  	gboolean done = FALSE;
  
@@ -114,7 +122,7 @@ index 4d7857d5..7b239e0e 100644
  		GSList *next = l->next;
  		OfonoSlotObject *s = OFONO_SLOT_OBJECT(l->data);
  
-@@ -654,6 +657,35 @@ static OfonoSlotObject *slot_manager_find_slot_imsi(OfonoSlotManagerObject *mgr,
+@@ -654,6 +658,35 @@ static OfonoSlotObject *slot_manager_find_slot_imsi(OfonoSlotManagerObject *mgr,
  	return data.slot;
  }
  
@@ -150,7 +158,7 @@ index 4d7857d5..7b239e0e 100644
  static gboolean slot_manager_all_sims_are_initialized_cb(OfonoSlotObject *slot,
  	void *result)
  {
-@@ -1234,6 +1266,19 @@ void ofono_slot_manager_error(struct ofono_slot_manager *m, const char *key,
+@@ -1234,6 +1267,19 @@ void ofono_slot_manager_error(struct ofono_slot_manager *m, const char *key,
  	}
  }
  
@@ -170,7 +178,7 @@ index 4d7857d5..7b239e0e 100644
  struct ofono_slot *ofono_slot_add(struct ofono_slot_manager *m,
  	const char *path, enum ofono_radio_access_mode techs, const char *imei,
  	const char *imeisv, enum ofono_slot_sim_presence sim_presence,
-@@ -1249,7 +1294,7 @@ struct ofono_slot *ofono_slot_add(struct ofono_slot_manager *m,
+@@ -1249,7 +1295,7 @@ struct ofono_slot *ofono_slot_add(struct ofono_slot_manager *m,
  	 * much at any time. This has to be dealt with somehow at some
  	 * point but for now let's leave it as is.
  	 */
@@ -179,3 +187,38 @@ index 4d7857d5..7b239e0e 100644
  		g_variant_is_object_path(path) && imei &&
  		!slot_manager_foreach_slot(mgr,	slot_check_slot_name, path)) {
  		return slot_add_internal(mgr, path, techs, imei, imeisv,
+@@ -1381,6 +1427,14 @@ static void ofono_slot_object_init(OfonoSlotObject *slot)
+ 	slot->pub.enabled = TRUE; /* Enabled by default */
+ }
+ 
++static void init_timer_cb(struct l_timeout *timeout, void *user_data)
++{
++	struct OfonoSlotManagerObject *mgr = user_data;
++	DBG("slot-manager init_timer_cb");
++
++	slot_manager_update_ready(mgr);
++}
++
+ static void ofono_slot_manager_object_init(OfonoSlotManagerObject *mgr)
+ {
+ 	static const struct slot_manager_dbus_cb dbus_cb = {
+@@ -1438,6 +1492,8 @@ static void ofono_slot_manager_object_init(OfonoSlotManagerObject *mgr)
+ 	/* And block all requests until that happens */
+ 	mgr->dbus = slot_manager_dbus_new(&mgr->pub, &dbus_cb);
+ 	slot_manager_dbus_set_block(mgr->dbus, SLOT_MANAGER_DBUS_BLOCK_ALL);
++
++	mgr->init_timeout = l_timeout_create_ms(5000, init_timer_cb, mgr, NULL);
+ }
+ 
+ static void ofono_slot_base_class_init(OfonoSlotBaseClass *c)
+@@ -1493,6 +1549,10 @@ void slot_manager_cleanup(void)
+ 		slot_manager_foreach_slot(mgr, ofono_slot_manager_detach, NULL);
+ 		mgr->drivers = NULL;
+ 		g_slist_free_full(drivers,(GDestroyNotify)slot_driver_reg_free);
++
++		l_timeout_remove(mgr->init_timeout);
++		mgr->init_timeout = NULL;
++
+ 		g_object_unref(mgr);
+ 	}
+ }
