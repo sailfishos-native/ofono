@@ -1,5 +1,5 @@
 diff --git a/drivers/qmimodem/qmi.c b/drivers/qmimodem/qmi.c
-index b8f46a5b..7cfb2925 100644
+index 10dbdaac..57e4dc78 100644
 --- a/drivers/qmimodem/qmi.c
 +++ b/drivers/qmimodem/qmi.c
 @@ -26,6 +26,7 @@
@@ -42,10 +42,10 @@ index b8f46a5b..7cfb2925 100644
  					struct qmi_request *req)
  {
 diff --git a/drivers/qmimodem/qmi.h b/drivers/qmimodem/qmi.h
-index 0e48313e..8e13ea41 100644
+index 69698ee0..b0fc9f2b 100644
 --- a/drivers/qmimodem/qmi.h
 +++ b/drivers/qmimodem/qmi.h
-@@ -7,6 +7,7 @@
+@@ -9,6 +9,7 @@
  
  #include <stdbool.h>
  #include <stdint.h>
@@ -53,7 +53,7 @@ index 0e48313e..8e13ea41 100644
  
  #define QMI_SERVICE_CONTROL	0	/* Control service */
  #define QMI_SERVICE_WDS		1	/* Wireless data service */
-@@ -89,6 +90,9 @@ int qmi_qmux_device_shutdown(struct qmi_qmux_device *qmux,
+@@ -91,6 +92,9 @@ int qmi_qmux_device_shutdown(struct qmi_qmux_device *qmux,
  				qmi_qmux_device_shutdown_func_t func,
  				void *user_data, qmi_destroy_func_t destroy);
  
@@ -160,7 +160,7 @@ index aed662da..fe27502c 100644
  }
  
 diff --git a/plugins/gobi.c b/plugins/gobi.c
-index c1b30918..c77094a5 100644
+index bfc9c1e8..4e6d33e8 100644
 --- a/plugins/gobi.c
 +++ b/plugins/gobi.c
 @@ -15,6 +15,7 @@
@@ -184,9 +184,9 @@ index c1b30918..c77094a5 100644
  #define GOBI_DMS	(1 << 0)
  #define GOBI_NAS	(1 << 1)
  #define GOBI_WMS	(1 << 2)
-@@ -614,6 +621,15 @@ static int gobi_enable(struct ofono_modem *modem)
- 		qmi_qmux_device_set_io_debug(data->device,
- 						gobi_io_debug, "QMI: ");
+@@ -643,6 +650,15 @@ static void init_powered_down_cb(int error, uint16_t type,
+ 	if (error)
+ 		goto error;
  
 +	//Get a handle to an AT interface if one was found, and attach it to the qmi_device
 +	GAtChat *atchat = at_util_open_device(modem, "Aux", NULL, "Aux: ", NULL);
@@ -199,12 +199,12 @@ index c1b30918..c77094a5 100644
 +
  	r = qmi_qmux_device_discover(data->device, discover_cb, modem, NULL);
  	if (!r)
- 		return -EINPROGRESS;
+ 		return;
 diff --git a/plugins/udevng.c b/plugins/udevng.c
-index 1c56e2ea..b089a227 100644
+index 64875a47..e530f916 100644
 --- a/plugins/udevng.c
 +++ b/plugins/udevng.c
-@@ -2149,6 +2149,7 @@ static struct {
+@@ -2091,6 +2091,7 @@ static struct {
  	{ "quectelqmi",	"qcserial",	"2c7c", "0121"	},
  	{ "quectelqmi",	"qmi_wwan",	"2c7c", "0125"	},
  	{ "quectelqmi",	"qcserial",	"2c7c", "0125"	},
@@ -212,7 +212,7 @@ index 1c56e2ea..b089a227 100644
  	{ "quectelqmi",	"qmi_wwan",	"2c7c", "0195"	},
  	{ "quectelqmi",	"qcserial",	"2c7c", "0195"	},
  	{ "quectelqmi",	"option",	"2c7c", "0195"	},
-@@ -2187,6 +2188,12 @@ static void check_usb_device(struct udev_device *device)
+@@ -2128,6 +2129,12 @@ static void check_usb_device(struct udev_device *device)
  	const char *syspath, *devname, *driver;
  	const char *vendor = NULL, *model = NULL;
  	const char *kernel_driver;
@@ -225,7 +225,7 @@ index 1c56e2ea..b089a227 100644
  
  	usb_device = udev_device_get_parent_with_subsystem_devtype(device,
  							"usb", "usb_device");
-@@ -2258,10 +2265,39 @@ static void check_usb_device(struct udev_device *device)
+@@ -2199,10 +2206,39 @@ static void check_usb_device(struct udev_device *device)
  
  		if (driver == NULL)
  			return;
