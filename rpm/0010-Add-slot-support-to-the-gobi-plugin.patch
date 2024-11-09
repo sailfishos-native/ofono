@@ -1,5 +1,5 @@
 diff --git a/plugins/gobi.c b/plugins/gobi.c
-index cb20824c..f1340cc2 100644
+index 54b64acb..bfc9c1e8 100644
 --- a/plugins/gobi.c
 +++ b/plugins/gobi.c
 @@ -38,6 +38,7 @@
@@ -47,7 +47,7 @@ index cb20824c..f1340cc2 100644
  	struct service_request service_requests[8 + MAX_CONTEXTS * 2];
  	int cur_service_request;
  	int num_service_requests;
-@@ -106,6 +130,28 @@ static void gobi_io_debug(const char *str, void *user_data)
+@@ -105,6 +129,28 @@ static void gobi_io_debug(const char *str, void *user_data)
  	ofono_debug("%s%s", prefix, str);
  }
  
@@ -97,8 +97,8 @@ index cb20824c..f1340cc2 100644
  	qmi_qmux_device_free(data->device);
  
  	l_free(data);
-@@ -427,6 +480,11 @@ static void get_data_format_cb(struct qmi_result *result, void *user_data)
- 	}
+@@ -431,6 +484,11 @@ static void get_data_format_cb(struct qmi_result *result, void *user_data)
+ 	setup_qmi_wwan(data->main_net_name, llproto);
  
  done:
 +
@@ -109,7 +109,7 @@ index cb20824c..f1340cc2 100644
  	if (qmi_service_send(data->dms, QMI_DMS_GET_CAPS, NULL,
  						get_caps_cb, modem, NULL) > 0)
  		return;
-@@ -767,11 +825,11 @@ static void gobi_pre_sim(struct ofono_modem *modem)
+@@ -788,11 +846,11 @@ static void gobi_pre_sim(struct ofono_modem *modem)
  	ofono_devinfo_create(modem, 0, "qmimodem", qmi_service_clone(data->dms));
  
  	if ((data->features & GOBI_UIM) && !legacy)
@@ -123,7 +123,7 @@ index cb20824c..f1340cc2 100644
  						qmi_service_clone(data->dms));
  
  	if (data->features & GOBI_VOICE)
-@@ -781,6 +839,8 @@ static void gobi_pre_sim(struct ofono_modem *modem)
+@@ -802,6 +860,8 @@ static void gobi_pre_sim(struct ofono_modem *modem)
  	if (data->features & GOBI_PDS) /* exclusive use, no need to clone */
  		ofono_location_reporting_create(modem, 0, "qmimodem",
  						l_steal_ptr(data->pds));
@@ -132,7 +132,7 @@ index cb20824c..f1340cc2 100644
  }
  
  static void gobi_setup_gprs(struct ofono_modem *modem)
-@@ -885,6 +945,8 @@ static void gobi_post_sim(struct ofono_modem *modem)
+@@ -898,6 +958,8 @@ static void gobi_post_sim(struct ofono_modem *modem)
  
  	if (data->features & GOBI_WDS)
  		gobi_setup_gprs(modem);
@@ -141,7 +141,7 @@ index cb20824c..f1340cc2 100644
  }
  
  static void gobi_post_online(struct ofono_modem *modem)
-@@ -912,6 +974,131 @@ static void gobi_post_online(struct ofono_modem *modem)
+@@ -925,6 +987,131 @@ static void gobi_post_online(struct ofono_modem *modem)
  	}
  }
  
