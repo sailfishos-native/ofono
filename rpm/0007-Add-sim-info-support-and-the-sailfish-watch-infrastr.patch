@@ -1,33 +1,8 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Adam Pigg <adam@piggz.co.uk>
-Date: Sun, 10 Mar 2024 12:19:10 +0000
-Subject: [PATCH 1/1] Add sim info support and the sailfish-watch infrastrcture
-
----
- Makefile.am              |   3 +
- configure.ac             |   6 +
- include/netreg.h         |  21 +
- include/sailfish_watch.h | 110 +++++
- include/sim.h            |  16 +
- include/types.h          |  19 +
- src/network.c            |  28 ++
- src/sailfish_watch.c     | 895 +++++++++++++++++++++++++++++++++++++++
- src/sim-info-dbus.c      | 285 +++++++++++++
- src/sim-info.c           | 623 +++++++++++++++++++++++++++
- src/sim-info.h           |  72 ++++
- src/sim.c                | 100 +++++
- 13 files changed, 2325 insertions(+)
- create mode 100644 include/sailfish_watch.h
- create mode 100644 src/sailfish_watch.c
- create mode 100644 src/sim-info-dbus.c
- create mode 100644 src/sim-info.c
- create mode 100644 src/sim-info.h
-
 diff --git a/Makefile.am b/Makefile.am
-index bad91b88516c5e4205069f3fd4ba51f000688ac9..cf13de97ea24a5dd7fda5918a8798b3ed6681ad3 100644
+index 18af6b94..2a2ff240 100644
 --- a/Makefile.am
 +++ b/Makefile.am
-@@ -178,6 +178,9 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
+@@ -180,6 +180,9 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
  			include/storage.h include/dbus-access.h \
  			include/dbus-clients.h include/cell-info.h
  
@@ -38,10 +13,10 @@ index bad91b88516c5e4205069f3fd4ba51f000688ac9..cf13de97ea24a5dd7fda5918a8798b3e
  
  local_headers = $(foreach file,$(pkginclude_HEADERS) \
 diff --git a/configure.ac b/configure.ac
-index b2851debf8940cfae28f7bbfd0dd483abf0ee9b8..a54928f20764af7f23fdbd8a70d415465b74b523 100644
+index 37e6abe5..74ab36c9 100644
 --- a/configure.ac
 +++ b/configure.ac
-@@ -270,6 +270,12 @@ AC_ARG_ENABLE(sailfish-bt, AS_HELP_STRING([--enable-sailfish-bt],
+@@ -258,6 +258,12 @@ AC_ARG_ENABLE(sailfish-bt, AS_HELP_STRING([--enable-sailfish-bt],
  					[enable_sailfish_bt=${enableval}])
  AM_CONDITIONAL(SAILFISH_BT, test "${enable_sailfish_bt}" = "yes")
  
@@ -55,10 +30,10 @@ index b2851debf8940cfae28f7bbfd0dd483abf0ee9b8..a54928f20764af7f23fdbd8a70d41546
  			[disable UPower plugin]),
  					[enable_upower=${enableval}])
 diff --git a/include/netreg.h b/include/netreg.h
-index 5cd1045f4ea61faefdd22f7dfa76126217228108..7aa3b677095c798697688dad1c7dec27e331086d 100644
+index 8d11518a..bc494877 100644
 --- a/include/netreg.h
 +++ b/include/netreg.h
-@@ -30,6 +30,20 @@ extern "C" {
+@@ -18,6 +18,20 @@ extern "C" {
  
  struct ofono_netreg;
  
@@ -79,7 +54,7 @@ index 5cd1045f4ea61faefdd22f7dfa76126217228108..7aa3b677095c798697688dad1c7dec27
  /* Theoretical limit is 16, but each GSM char can be encoded into
   *  * 3 UTF8 characters resulting in 16*3=48 chars
   *   */
-@@ -111,6 +125,13 @@ int ofono_netreg_get_technology(struct ofono_netreg *netreg);
+@@ -101,6 +115,13 @@ int ofono_netreg_get_technology(struct ofono_netreg *netreg);
  const char *ofono_netreg_get_mcc(struct ofono_netreg *netreg);
  const char *ofono_netreg_get_mnc(struct ofono_netreg *netreg);
  
@@ -95,7 +70,7 @@ index 5cd1045f4ea61faefdd22f7dfa76126217228108..7aa3b677095c798697688dad1c7dec27
  #endif
 diff --git a/include/sailfish_watch.h b/include/sailfish_watch.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..02e4cfd1544be26c88efd344ecc3c1182287a4d7
+index 00000000..02e4cfd1
 --- /dev/null
 +++ b/include/sailfish_watch.h
 @@ -0,0 +1,110 @@
@@ -210,10 +185,10 @@ index 0000000000000000000000000000000000000000..02e4cfd1544be26c88efd344ecc3c118
 + * End:
 + */
 diff --git a/include/sim.h b/include/sim.h
-index 1403982206fc1dde8b14df45b4fb0c1085859fba..89e7655b7ee70ffc3d61ac8086ae71b5f4fcb680 100644
+index 84592fc9..548bfc4f 100644
 --- a/include/sim.h
 +++ b/include/sim.h
-@@ -252,6 +252,22 @@ ofono_bool_t ofono_sim_add_spn_watch(struct ofono_sim *sim, unsigned int *id,
+@@ -242,6 +242,22 @@ ofono_bool_t ofono_sim_add_spn_watch(struct ofono_sim *sim, unsigned int *id,
  
  ofono_bool_t ofono_sim_remove_spn_watch(struct ofono_sim *sim, unsigned int *id);
  
@@ -237,10 +212,10 @@ index 1403982206fc1dde8b14df45b4fb0c1085859fba..89e7655b7ee70ffc3d61ac8086ae71b5
   * It is assumed that when ofono_sim_inserted_notify is called, the SIM is
   * ready to be queried for files that are always available even if SIM
 diff --git a/include/types.h b/include/types.h
-index 11950a91e99e1ff014785aad247bd4086096e43c..68a525460661129d6085738771b78c898b1a1fb7 100644
+index f370d5cd..0971d9f0 100644
 --- a/include/types.h
 +++ b/include/types.h
-@@ -44,6 +44,25 @@ struct ofono_modem;
+@@ -30,6 +30,25 @@ struct ofono_modem;
  
  typedef void (*ofono_destroy_func)(void *data);
  
@@ -267,10 +242,10 @@ index 11950a91e99e1ff014785aad247bd4086096e43c..68a525460661129d6085738771b78c89
  enum ofono_clir_option {
  	OFONO_CLIR_OPTION_DEFAULT = 0,
 diff --git a/src/network.c b/src/network.c
-index 886e5bf0f9a3ddfdf8f795b231887b1706215b26..8f71dacff9a34ef93245b538db40a2500ddcc4a2 100644
+index d9383a3c..d4f17f00 100644
 --- a/src/network.c
 +++ b/src/network.c
-@@ -2077,3 +2077,31 @@ void *ofono_netreg_get_data(struct ofono_netreg *netreg)
+@@ -2070,3 +2070,31 @@ void *ofono_netreg_get_data(struct ofono_netreg *netreg)
  {
  	return netreg->driver_data;
  }
@@ -304,7 +279,7 @@ index 886e5bf0f9a3ddfdf8f795b231887b1706215b26..8f71dacff9a34ef93245b538db40a250
 +}
 diff --git a/src/sailfish_watch.c b/src/sailfish_watch.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..ccdd21d21ed29cbb1846df78b986154e43295a8e
+index 00000000..ccdd21d2
 --- /dev/null
 +++ b/src/sailfish_watch.c
 @@ -0,0 +1,895 @@
@@ -1205,7 +1180,7 @@ index 0000000000000000000000000000000000000000..ccdd21d21ed29cbb1846df78b986154e
 + */
 diff --git a/src/sim-info-dbus.c b/src/sim-info-dbus.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..629d76e9d9a04b3b1a9ef4d779c88d87d1844c12
+index 00000000..6e9be537
 --- /dev/null
 +++ b/src/sim-info-dbus.c
 @@ -0,0 +1,285 @@
@@ -1496,7 +1471,7 @@ index 0000000000000000000000000000000000000000..629d76e9d9a04b3b1a9ef4d779c88d87
 + */
 diff --git a/src/sim-info.c b/src/sim-info.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..71e6fb30f6051f98ac4c3d35c392c54d727c9e4e
+index 00000000..28912ba1
 --- /dev/null
 +++ b/src/sim-info.c
 @@ -0,0 +1,623 @@
@@ -2125,7 +2100,7 @@ index 0000000000000000000000000000000000000000..71e6fb30f6051f98ac4c3d35c392c54d
 + */
 diff --git a/src/sim-info.h b/src/sim-info.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..38a80619df8362422c6c69495762953ef0a56750
+index 00000000..38a80619
 --- /dev/null
 +++ b/src/sim-info.h
 @@ -0,0 +1,72 @@
@@ -2202,10 +2177,10 @@ index 0000000000000000000000000000000000000000..38a80619df8362422c6c69495762953e
 + * End:
 + */
 diff --git a/src/sim.c b/src/sim.c
-index 8a97e87612d966309bc9996019ff11b8b0bfc3a0..2f2cea7d72d622f4f4a9abf92d6aece2953c7657 100644
+index 7d9a180a..59b6057e 100644
 --- a/src/sim.c
 +++ b/src/sim.c
-@@ -72,6 +72,7 @@ struct ofono_sim_aid_session {
+@@ -58,6 +58,7 @@ struct ofono_sim_aid_session {
  struct ofono_sim {
  	/* Contents of the SIM file system, in rough initialization order */
  	char *iccid;
@@ -2213,7 +2188,7 @@ index 8a97e87612d966309bc9996019ff11b8b0bfc3a0..2f2cea7d72d622f4f4a9abf92d6aece2
  
  	char **language_prefs;
  	unsigned char *efli;
-@@ -96,6 +97,7 @@ struct ofono_sim {
+@@ -82,6 +83,7 @@ struct ofono_sim {
  	char *imsi;
  	char mcc[OFONO_MAX_MCC_LENGTH + 1];
  	char mnc[OFONO_MAX_MNC_LENGTH + 1];
@@ -2221,7 +2196,7 @@ index 8a97e87612d966309bc9996019ff11b8b0bfc3a0..2f2cea7d72d622f4f4a9abf92d6aece2
  
  	GSList *own_numbers;
  	GSList *new_numbers;
-@@ -378,6 +380,94 @@ static void call_state_watches(struct ofono_sim *sim)
+@@ -361,6 +363,94 @@ static void call_state_watches(struct ofono_sim *sim)
  	}
  }
  
@@ -2316,15 +2291,15 @@ index 8a97e87612d966309bc9996019ff11b8b0bfc3a0..2f2cea7d72d622f4f4a9abf92d6aece2
  static DBusMessage *sim_get_properties(DBusConnection *conn,
  					DBusMessage *msg, void *data)
  {
-@@ -1742,6 +1832,7 @@ static void sim_imsi_obtained(struct ofono_sim *sim, const char *imsi)
+@@ -1868,6 +1958,7 @@ static void sim_imsi_obtained(struct ofono_sim *sim, const char *imsi)
  						DBUS_TYPE_STRING, &str);
  	}
  
 +	imsi_watches_notify(sim);
  	sim_set_ready(sim);
- 
  }
-@@ -2298,6 +2389,8 @@ static void sim_iccid_read_cb(int ok, int length, int record,
+ 
+@@ -2423,6 +2514,8 @@ static void sim_iccid_read_cb(int ok, int length, int record,
  						"CardIdentifier",
  						DBUS_TYPE_STRING,
  						&sim->iccid);
@@ -2333,7 +2308,7 @@ index 8a97e87612d966309bc9996019ff11b8b0bfc3a0..2f2cea7d72d622f4f4a9abf92d6aece2
  }
  
  static void sim_iccid_changed(int id, void *userdata)
-@@ -3260,6 +3353,11 @@ static void sim_unregister(struct ofono_atom *atom)
+@@ -3198,6 +3291,11 @@ static void sim_unregister(struct ofono_atom *atom)
  
  	__ofono_modem_remove_atom_watch(modem, sim->hfp_watch);
  
@@ -2345,7 +2320,7 @@ index 8a97e87612d966309bc9996019ff11b8b0bfc3a0..2f2cea7d72d622f4f4a9abf92d6aece2
  	__ofono_watchlist_free(sim->state_watches);
  	sim->state_watches = NULL;
  	__ofono_watchlist_free(sim->spn_watches);
-@@ -3367,6 +3465,8 @@ void ofono_sim_register(struct ofono_sim *sim)
+@@ -3305,6 +3403,8 @@ void ofono_sim_register(struct ofono_sim *sim)
  	}
  
  	ofono_modem_add_interface(modem, OFONO_SIM_MANAGER_INTERFACE);
