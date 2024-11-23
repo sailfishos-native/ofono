@@ -1,6 +1,6 @@
 Name:       ofono
 Summary:    Open Source Telephony
-Version:    2.10
+Version:    2.13
 Release:    1
 License:    GPLv2
 URL:        https://github.com/sailfishos/ofono
@@ -22,6 +22,7 @@ Patch12:    0013-fix-unit-test-ell-ld.patch
 Patch13:    0015-voicecall-wakelock.patch
 Patch14:    0016-udevng-wakelock.patch
 Patch16:    0017-hack-slot-remove-support.patch
+Patch17:    0018-add-defines-from-new-kernel.patch
 
 %define libglibutil_version 1.0.51
 
