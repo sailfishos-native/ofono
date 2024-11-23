@@ -1,0 +1,17 @@
+diff --git a/src/rmnet.c b/src/rmnet.c
+index 83110c33..c012936b 100644
+--- a/src/rmnet.c
++++ b/src/rmnet.c
+@@ -26,6 +26,12 @@
+ #define RMNET_TYPE "rmnet"
+ #define MAX_MUX_IDS 254U
+ 
++#define RMNET_FLAGS_INGRESS_DEAGGREGATION (1U << 0)
++#define RMNET_FLAGS_INGRESS_MAP_CKSUMV4 (1U << 2)
++#define RMNET_FLAGS_INGRESS_MAP_CKSUMV5 (1U << 4)
++#define RMNET_FLAGS_EGRESS_MAP_CKSUMV4 (1U << 3)
++#define RMNET_FLAGS_EGRESS_MAP_CKSUMV5 (1U << 5)
++
+ struct rmnet_request {
+ 	uint32_t parent_ifindex;
+ 	rmnet_new_interfaces_func_t new_cb;
