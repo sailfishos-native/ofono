@@ -1,5 +1,5 @@
 diff --git a/plugins/udevng.c b/plugins/udevng.c
-index b089a227..ed830c95 100644
+index e530f916..0d748c87 100644
 --- a/plugins/udevng.c
 +++ b/plugins/udevng.c
 @@ -20,6 +20,8 @@
@@ -57,7 +57,7 @@ index b089a227..ed830c95 100644
  static const char *get_ifname(const struct device_info *info)
  {
  	struct udev_device *udev_device = info->udev_device;
-@@ -2001,6 +2042,9 @@ static void add_device(const char *modem_syspath, const char *modem_devname,
+@@ -1942,6 +1983,9 @@ static void add_device(const char *modem_syspath, const char *modem_devname,
  	if (udev_device_get_syspath(device) == NULL)
  		return;
  

@@ -1,26 +1,8 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Adam Pigg <adam@piggz.co.uk>
-Date: Sun, 10 Mar 2024 12:24:08 +0000
-Subject: [PATCH 1/1] Add the sailfish slot-manager and dbus interface
-
----
- Makefile.am             |   12 +-
- include/slot.h          |  168 +++++
- src/ofono.h             |    2 +
- src/slot-manager-dbus.c | 1152 +++++++++++++++++++++++++++++
- src/slot-manager-dbus.h |   85 +++
- src/slot-manager.c      | 1551 +++++++++++++++++++++++++++++++++++++++
- 6 files changed, 2967 insertions(+), 3 deletions(-)
- create mode 100644 include/slot.h
- create mode 100644 src/slot-manager-dbus.c
- create mode 100644 src/slot-manager-dbus.h
- create mode 100644 src/slot-manager.c
-
 diff --git a/Makefile.am b/Makefile.am
-index cf13de97ea24a5dd7fda5918a8798b3ed6681ad3..636546189a50f338f77706ec465cded268a89210 100644
+index 2876d35f..2360e657 100644
 --- a/Makefile.am
 +++ b/Makefile.am
-@@ -179,7 +179,7 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
+@@ -181,7 +181,7 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
  			include/dbus-clients.h include/cell-info.h
  
  if SAILFISH_SLOT
@@ -29,7 +11,7 @@ index cf13de97ea24a5dd7fda5918a8798b3ed6681ad3..636546189a50f338f77706ec465cded2
  endif
  nodist_pkginclude_HEADERS = include/version.h
  
-@@ -700,12 +700,18 @@ src_ofonod_SOURCES = $(builtin_sources) $(gatchat_sources) src/ofono.ver \
+@@ -685,12 +685,18 @@ src_ofonod_SOURCES = $(builtin_sources) $(gatchat_sources) src/ofono.ver \
  			src/hfp.h src/siri.c \
  			src/netmon.c src/lte.c src/ims.c \
  			src/netmonagent.c src/netmonagent.h \
@@ -52,7 +34,7 @@ index cf13de97ea24a5dd7fda5918a8798b3ed6681ad3..636546189a50f338f77706ec465cded2
  
 diff --git a/include/slot.h b/include/slot.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..8fb8b730315df1a3750eb9a47bd462b358dcd509
+index 00000000..8fb8b730
 --- /dev/null
 +++ b/include/slot.h
 @@ -0,0 +1,168 @@
@@ -225,10 +207,10 @@ index 0000000000000000000000000000000000000000..8fb8b730315df1a3750eb9a47bd462b3
 +
 +#endif /* __OFONO_SLOT_H */
 diff --git a/src/ofono.h b/src/ofono.h
-index f7e01e004a00c2556607095a19d176fda30e3241..ad863738f4fb696e3078a39cad2528986f770c95 100644
+index 81e831b1..5c7bf691 100644
 --- a/src/ofono.h
 +++ b/src/ofono.h
-@@ -619,3 +619,5 @@ ofono_bool_t __ofono_private_network_request(ofono_private_network_cb_t cb,
+@@ -621,3 +621,5 @@ ofono_bool_t __ofono_private_network_request(ofono_private_network_cb_t cb,
  #include <ofono/netmon.h>
  #include <ofono/lte.h>
  #include <ofono/ims.h>
@@ -236,7 +218,7 @@ index f7e01e004a00c2556607095a19d176fda30e3241..ad863738f4fb696e3078a39cad252898
 +#include <ofono/sailfish_watch.h>
 diff --git a/src/slot-manager-dbus.c b/src/slot-manager-dbus.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..a7a4351ada10970cd45e6db3c8532f7548274590
+index 00000000..a7a4351a
 --- /dev/null
 +++ b/src/slot-manager-dbus.c
 @@ -0,0 +1,1152 @@
@@ -1394,7 +1376,7 @@ index 0000000000000000000000000000000000000000..a7a4351ada10970cd45e6db3c8532f75
 + */
 diff --git a/src/slot-manager-dbus.h b/src/slot-manager-dbus.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..cd05dd8bde842a7b0d2b39ba4a824fa4354bef7d
+index 00000000..cd05dd8b
 --- /dev/null
 +++ b/src/slot-manager-dbus.h
 @@ -0,0 +1,85 @@
@@ -1485,7 +1467,7 @@ index 0000000000000000000000000000000000000000..cd05dd8bde842a7b0d2b39ba4a824fa4
 + */
 diff --git a/src/slot-manager.c b/src/slot-manager.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..c0e5088b9bf035ce13e1e4ba46c07472fc2b3ac5
+index 00000000..00c693fb
 --- /dev/null
 +++ b/src/slot-manager.c
 @@ -0,0 +1,1540 @@

@@ -160,20 +160,20 @@ index aed662da..fe27502c 100644
  }
  
 diff --git a/plugins/gobi.c b/plugins/gobi.c
-index bfc9c1e8..4e6d33e8 100644
+index 354c2f3c..ae4ebc1d 100644
 --- a/plugins/gobi.c
 +++ b/plugins/gobi.c
-@@ -15,6 +15,7 @@
- #include <stdlib.h>
+@@ -16,6 +16,7 @@
  #include <stdio.h>
  #include <net/if.h>
+ #include <sys/stat.h>
 +#include <gatchat.h>
  
  #define OFONO_API_SUBJECT_TO_CHANGE
  #include <ofono/plugin.h>
-@@ -47,6 +48,12 @@
- #include <drivers/qmimodem/wda.h>
- #include <drivers/qmimodem/util.h>
+@@ -50,6 +51,12 @@
+ #include <drivers/qmimodem/common.h>
+ #include "src/rmnet.h"
  
 +//Define function from atutil.h as it cant be uncluded
 +GAtChat *at_util_open_device(struct ofono_modem *modem, const char *key,
@@ -184,9 +184,9 @@ index bfc9c1e8..4e6d33e8 100644
  #define GOBI_DMS	(1 << 0)
  #define GOBI_NAS	(1 << 1)
  #define GOBI_WMS	(1 << 2)
-@@ -643,6 +650,15 @@ static void init_powered_down_cb(int error, uint16_t type,
- 	if (error)
+@@ -892,6 +899,15 @@ static void init_powered_down_cb(int error, uint16_t type,
  		goto error;
+ 	}
  
 +	//Get a handle to an AT interface if one was found, and attach it to the qmi_device
 +	GAtChat *atchat = at_util_open_device(modem, "Aux", NULL, "Aux: ", NULL);

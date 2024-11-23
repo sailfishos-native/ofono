@@ -1,8 +1,8 @@
 diff --git a/Makefile.am b/Makefile.am
-index 1876e489..090791d9 100644
+index 2360e657..4e9f9e10 100644
 --- a/Makefile.am
 +++ b/Makefile.am
-@@ -884,7 +884,7 @@ unit_objects += $(unit_test_common_OBJECTS)
+@@ -887,7 +887,7 @@ unit_objects += $(unit_test_common_OBJECTS)
  
  unit_test_cell_info_SOURCES = unit/test-cell-info.c src/cell-info.c src/log.c
  unit_test_cell_info_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT)
@@ -11,7 +11,7 @@ index 1876e489..090791d9 100644
  unit_objects += $(unit_test_cell_info_OBJECTS)
  unit_tests += unit/test-cell-info
  
-@@ -892,7 +892,7 @@ unit_test_cell_info_control_SOURCES = unit/test-cell-info-control.c \
+@@ -895,7 +895,7 @@ unit_test_cell_info_control_SOURCES = unit/test-cell-info-control.c \
  			unit/fake_cell_info.c src/cell-info.c \
  			src/cell-info-control.c src/log.c
  unit_test_cell_info_control_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT)
@@ -20,7 +20,7 @@ index 1876e489..090791d9 100644
  unit_objects += $(unit_test_cell_info_control_OBJECTS)
  unit_tests += unit/test-cell-info-control
  
-@@ -903,7 +903,7 @@ unit_test_cell_info_dbus_SOURCES = unit/test-dbus.c \
+@@ -906,7 +906,7 @@ unit_test_cell_info_dbus_SOURCES = unit/test-dbus.c \
  			src/dbus-clients.c src/dbus.c src/log.c
  unit_test_cell_info_dbus_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT) \
  			@DBUS_GLIB_CFLAGS@
@@ -29,7 +29,7 @@ index 1876e489..090791d9 100644
  unit_objects += $(unit_test_cell_info_dbus_OBJECTS)
  unit_tests += unit/test-cell-info-dbus
  
-@@ -1010,7 +1010,7 @@ unit_test_dbus_clients_SOURCES = unit/test-dbus-clients.c unit/test-dbus.c \
+@@ -1013,7 +1013,7 @@ unit_test_dbus_clients_SOURCES = unit/test-dbus-clients.c unit/test-dbus.c \
  				src/dbus-clients.c gdbus/object.c \
  				src/dbus.c src/log.c
  unit_test_dbus_clients_CFLAGS =  @DBUS_GLIB_CFLAGS@ $(COVERAGE_OPT) $(AM_CFLAGS)
@@ -38,7 +38,7 @@ index 1876e489..090791d9 100644
  unit_objects += $(unit_test_dbus_clients_OBJECTS)
  unit_tests += unit/test-dbus-clients
  
-@@ -1018,7 +1018,7 @@ unit_test_dbus_queue_SOURCES = unit/test-dbus-queue.c unit/test-dbus.c \
+@@ -1021,7 +1021,7 @@ unit_test_dbus_queue_SOURCES = unit/test-dbus-queue.c unit/test-dbus.c \
  				src/dbus-queue.c gdbus/object.c \
  				src/dbus.c src/log.c
  unit_test_dbus_queue_CFLAGS =  @DBUS_GLIB_CFLAGS@ $(COVERAGE_OPT) $(AM_CFLAGS)
@@ -47,7 +47,7 @@ index 1876e489..090791d9 100644
  unit_objects += $(unit_test_dbus_queue_OBJECTS)
  unit_tests += unit/test-dbus-queue
  
-@@ -1026,7 +1026,7 @@ if SAILFISH_ACCESS
+@@ -1029,7 +1029,7 @@ if SAILFISH_ACCESS
  unit_test_sailfish_access_SOURCES = unit/test-sailfish_access.c \
  			plugins/sailfish_access.c src/dbus-access.c src/log.c
  unit_test_sailfish_access_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT)
@@ -56,7 +56,7 @@ index 1876e489..090791d9 100644
  unit_objects += $(unit_test_sailfish_access_OBJECTS)
  unit_tests += unit/test-sailfish_access
  endif
-@@ -1034,7 +1034,7 @@ endif
+@@ -1037,7 +1037,7 @@ endif
  unit_test_dbus_access_SOURCES = unit/test-dbus-access.c src/dbus-access.c \
  			src/log.c
  unit_test_dbus_access_CFLAGS = $(AM_CFLAGS) $(COVERAGE_OPT)

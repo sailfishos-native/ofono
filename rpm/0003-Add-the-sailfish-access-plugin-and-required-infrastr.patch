@@ -1,53 +1,8 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Adam Pigg <adam@piggz.co.uk>
-Date: Sun, 10 Mar 2024 11:53:51 +0000
-Subject: [PATCH 1/1] Add the sailfish-access plugin and required
- infrastructure
-
-Includes:
-dbus-access
-dbus-clients
-dbus-queue
-and associated tests
----
- Makefile.am                 |  41 ++-
- configure.ac                |  23 ++
- include/dbus-access.h       | 189 ++++++++++
- include/dbus-clients.h      |  55 +++
- include/dbus.h              |   6 +
- plugins/sailfish_access.c   | 257 +++++++++++++
- src/dbus-access.c           | 289 +++++++++++++++
- src/dbus-clients.c          | 182 +++++++++
- src/dbus-queue.c            | 299 +++++++++++++++
- src/dbus-queue.h            |  57 +++
- src/dbus.c                  |  29 +-
- src/ofono.h                 |   1 +
- unit/test-dbus-access.c     | 220 +++++++++++
- unit/test-dbus-clients.c    | 280 ++++++++++++++
- unit/test-dbus-queue.c      | 716 ++++++++++++++++++++++++++++++++++++
- unit/test-dbus.c            | 395 ++++++++++++++++++++
- unit/test-dbus.h            |  61 +++
- unit/test-sailfish_access.c | 302 +++++++++++++++
- 18 files changed, 3394 insertions(+), 8 deletions(-)
- create mode 100644 include/dbus-access.h
- create mode 100644 include/dbus-clients.h
- create mode 100644 plugins/sailfish_access.c
- create mode 100644 src/dbus-access.c
- create mode 100644 src/dbus-clients.c
- create mode 100644 src/dbus-queue.c
- create mode 100644 src/dbus-queue.h
- create mode 100644 unit/test-dbus-access.c
- create mode 100644 unit/test-dbus-clients.c
- create mode 100644 unit/test-dbus-queue.c
- create mode 100644 unit/test-dbus.c
- create mode 100644 unit/test-dbus.h
- create mode 100644 unit/test-sailfish_access.c
-
 diff --git a/Makefile.am b/Makefile.am
-index 09c4f3f3850f13e22e3a59f26794a84101de8f9c..0ab5d8e4ed423489e28bab448631b2aaa254e0a0 100644
+index f5ce0322..89d1712f 100644
 --- a/Makefile.am
 +++ b/Makefile.am
-@@ -175,7 +175,8 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
+@@ -177,7 +177,8 @@ pkginclude_HEADERS = include/log.h include/plugin.h include/history.h \
  			include/handsfree.h \
  			include/handsfree-audio.h include/siri.h \
  			include/netmon.h include/lte.h include/ims.h \
@@ -69,7 +24,7 @@ index 09c4f3f3850f13e22e3a59f26794a84101de8f9c..0ab5d8e4ed423489e28bab448631b2aa
  if RILMODEM
  builtin_sources += $(gril_sources)
  
-@@ -682,6 +688,7 @@ src_ofonod_SOURCES = $(builtin_sources) $(gatchat_sources) src/ofono.ver \
+@@ -667,6 +673,7 @@ src_ofonod_SOURCES = $(builtin_sources) $(gatchat_sources) src/ofono.ver \
  			src/private-network.c \
  			src/handsfree.c \
  			src/handsfree-audio.c src/bluetooth.h \
@@ -77,7 +32,7 @@ index 09c4f3f3850f13e22e3a59f26794a84101de8f9c..0ab5d8e4ed423489e28bab448631b2aa
  			src/hfp.h src/siri.c \
  			src/netmon.c src/lte.c src/ims.c \
  			src/netmonagent.c src/netmonagent.h \
-@@ -969,6 +976,38 @@ unit_test_provision_DEPENDENCIES = $(ell_dependencies) \
+@@ -961,6 +968,38 @@ unit_test_provision_DEPENDENCIES = $(ell_dependencies) \
  					unit/test-provision.db
  unit_objects += $(unit_test_provision_OBJECTS)
  
@@ -117,7 +72,7 @@ index 09c4f3f3850f13e22e3a59f26794a84101de8f9c..0ab5d8e4ed423489e28bab448631b2aa
  
  if TOOLS
 diff --git a/configure.ac b/configure.ac
-index a39e5375ae14743fe5da95dc2e06589fd3cc1866..5d6a960dbbde4bad14de9e21349875a5380ab650 100644
+index a2ffc714..6f506c9a 100644
 --- a/configure.ac
 +++ b/configure.ac
 @@ -162,6 +162,16 @@ else
@@ -137,7 +92,7 @@ index a39e5375ae14743fe5da95dc2e06589fd3cc1866..5d6a960dbbde4bad14de9e21349875a5
  AC_ARG_WITH([systemdunitdir], AS_HELP_STRING([--with-systemdunitdir=DIR],
  	[path to systemd service directory]), [path_systemdunit=${withval}],
  		[path_systemdunit="`$PKG_CONFIG --variable=systemdsystemunitdir systemd`"])
-@@ -276,6 +286,19 @@ AC_ARG_ENABLE(datafiles, AS_HELP_STRING([--disable-datafiles],
+@@ -264,6 +274,19 @@ AC_ARG_ENABLE(datafiles, AS_HELP_STRING([--disable-datafiles],
  					[enable_datafiles=${enableval}])
  AM_CONDITIONAL(DATAFILES, test "${enable_datafiles}" != "no")
  
@@ -159,7 +114,7 @@ index a39e5375ae14743fe5da95dc2e06589fd3cc1866..5d6a960dbbde4bad14de9e21349875a5
  	if (test "$localstatedir" = '${prefix}/var'); then
 diff --git a/include/dbus-access.h b/include/dbus-access.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..c62ce6dec508fe4992112c4f0a765b5a9b815151
+index 00000000..c62ce6de
 --- /dev/null
 +++ b/include/dbus-access.h
 @@ -0,0 +1,189 @@
@@ -354,7 +309,7 @@ index 0000000000000000000000000000000000000000..c62ce6dec508fe4992112c4f0a765b5a
 + */
 diff --git a/include/dbus-clients.h b/include/dbus-clients.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..4811b4245957e77302a6c24b7584dbc551a9ccf3
+index 00000000..4811b424
 --- /dev/null
 +++ b/include/dbus-clients.h
 @@ -0,0 +1,55 @@
@@ -414,10 +369,10 @@ index 0000000000000000000000000000000000000000..4811b4245957e77302a6c24b7584dbc5
 + * End:
 + */
 diff --git a/include/dbus.h b/include/dbus.h
-index a500db76a9217633b9fbe6bd1bc739d0dabe0b6c..984a9e9b5faada4a9fd2544c3e58a70c47f18ddc 100644
+index b1a11890..7d99f514 100644
 --- a/include/dbus.h
 +++ b/include/dbus.h
-@@ -101,6 +101,12 @@ int ofono_dbus_signal_dict_property_changed(DBusConnection *conn,
+@@ -87,6 +87,12 @@ int ofono_dbus_signal_dict_property_changed(DBusConnection *conn,
  						const char *name, int type,
  						const void *value);
  
@@ -432,7 +387,7 @@ index a500db76a9217633b9fbe6bd1bc739d0dabe0b6c..984a9e9b5faada4a9fd2544c3e58a70c
  #endif
 diff --git a/plugins/sailfish_access.c b/plugins/sailfish_access.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..08dca386da9d12bdc26e1909aef672d54f0e68e3
+index 00000000..08dca386
 --- /dev/null
 +++ b/plugins/sailfish_access.c
 @@ -0,0 +1,257 @@
@@ -695,7 +650,7 @@ index 0000000000000000000000000000000000000000..08dca386da9d12bdc26e1909aef672d5
 + */
 diff --git a/src/dbus-access.c b/src/dbus-access.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..11769734bc546ad8d6bcaf6ba1b3c6b29c9912e8
+index 00000000..11769734
 --- /dev/null
 +++ b/src/dbus-access.c
 @@ -0,0 +1,289 @@
@@ -990,7 +945,7 @@ index 0000000000000000000000000000000000000000..11769734bc546ad8d6bcaf6ba1b3c6b2
 + */
 diff --git a/src/dbus-clients.c b/src/dbus-clients.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..778186c2fe25ac3bc5d08af2fb8902a7d3f942fe
+index 00000000..f632c4a4
 --- /dev/null
 +++ b/src/dbus-clients.c
 @@ -0,0 +1,182 @@
@@ -1178,7 +1133,7 @@ index 0000000000000000000000000000000000000000..778186c2fe25ac3bc5d08af2fb8902a7
 + */
 diff --git a/src/dbus-queue.c b/src/dbus-queue.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..383a53362f532b525ae5ff50f8924a6679a6c42a
+index 00000000..383a5336
 --- /dev/null
 +++ b/src/dbus-queue.c
 @@ -0,0 +1,299 @@
@@ -1483,7 +1438,7 @@ index 0000000000000000000000000000000000000000..383a53362f532b525ae5ff50f8924a66
 + */
 diff --git a/src/dbus-queue.h b/src/dbus-queue.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..6e43f3ba09398387de7a5cb57d93757c3bcd8315
+index 00000000..6e43f3ba
 --- /dev/null
 +++ b/src/dbus-queue.h
 @@ -0,0 +1,57 @@
@@ -1545,10 +1500,10 @@ index 0000000000000000000000000000000000000000..6e43f3ba09398387de7a5cb57d93757c
 + * End:
 + */
 diff --git a/src/dbus.c b/src/dbus.c
-index 6468dc0199ec41c455726f59d1946d402127d32f..4ec8698789545cc1cbde7e1f91187afb48e792ad 100644
+index 4ad54e24..26290875 100644
 --- a/src/dbus.c
 +++ b/src/dbus.c
-@@ -209,8 +209,8 @@ void ofono_dbus_dict_append_dict(DBusMessageIter *dict, const char *key,
+@@ -195,8 +195,8 @@ void ofono_dbus_dict_append_dict(DBusMessageIter *dict, const char *key,
  	dbus_message_iter_close_container(dict, &entry);
  }
  
@@ -1559,7 +1514,7 @@ index 6468dc0199ec41c455726f59d1946d402127d32f..4ec8698789545cc1cbde7e1f91187afb
  					const char *interface,
  					const char *name,
  					int type, const void *value)
-@@ -219,11 +219,8 @@ int ofono_dbus_signal_property_changed(DBusConnection *conn,
+@@ -205,11 +205,8 @@ int ofono_dbus_signal_property_changed(DBusConnection *conn,
  	DBusMessageIter iter;
  
  	signal = dbus_message_new_signal(path, interface, "PropertyChanged");
@@ -1573,7 +1528,7 @@ index 6468dc0199ec41c455726f59d1946d402127d32f..4ec8698789545cc1cbde7e1f91187afb
  
  	dbus_message_iter_init_append(signal, &iter);
  
-@@ -231,6 +228,24 @@ int ofono_dbus_signal_property_changed(DBusConnection *conn,
+@@ -217,6 +214,24 @@ int ofono_dbus_signal_property_changed(DBusConnection *conn,
  
  	append_variant(&iter, type, value);
  
@@ -1599,10 +1554,10 @@ index 6468dc0199ec41c455726f59d1946d402127d32f..4ec8698789545cc1cbde7e1f91187afb
  }
  
 diff --git a/src/ofono.h b/src/ofono.h
-index 97b69f140b174c8fdd59e76edc6d3cd4ce2ab55c..ff7fc11a10a97614ecc874830de0af43f346cd3e 100644
+index a853bba6..ee318e8d 100644
 --- a/src/ofono.h
 +++ b/src/ofono.h
-@@ -614,6 +614,7 @@ void __ofono_private_network_release(int id);
+@@ -610,6 +610,7 @@ void __ofono_private_network_release(int id);
  ofono_bool_t __ofono_private_network_request(ofono_private_network_cb_t cb,
  						int *id, void *data);
  
@@ -1612,7 +1567,7 @@ index 97b69f140b174c8fdd59e76edc6d3cd4ce2ab55c..ff7fc11a10a97614ecc874830de0af43
  #include <ofono/ims.h>
 diff --git a/unit/test-dbus-access.c b/unit/test-dbus-access.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..485dbba4339bc0290440809a7c3e1551881c09c1
+index 00000000..485dbba4
 --- /dev/null
 +++ b/unit/test-dbus-access.c
 @@ -0,0 +1,220 @@
@@ -1838,7 +1793,7 @@ index 0000000000000000000000000000000000000000..485dbba4339bc0290440809a7c3e1551
 + */
 diff --git a/unit/test-dbus-clients.c b/unit/test-dbus-clients.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..b3dbefe5dc554c2d06d99b6e001ddf6425f558ed
+index 00000000..b3dbefe5
 --- /dev/null
 +++ b/unit/test-dbus-clients.c
 @@ -0,0 +1,280 @@
@@ -2124,7 +2079,7 @@ index 0000000000000000000000000000000000000000..b3dbefe5dc554c2d06d99b6e001ddf64
 + */
 diff --git a/unit/test-dbus-queue.c b/unit/test-dbus-queue.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..16339740311b58e25fcc994227327878e8e4faaf
+index 00000000..16339740
 --- /dev/null
 +++ b/unit/test-dbus-queue.c
 @@ -0,0 +1,716 @@
@@ -2846,7 +2801,7 @@ index 0000000000000000000000000000000000000000..16339740311b58e25fcc994227327878
 + */
 diff --git a/unit/test-dbus.c b/unit/test-dbus.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..c002f6372b799f4399815ad30a7891e92bc1b5d8
+index 00000000..c002f637
 --- /dev/null
 +++ b/unit/test-dbus.c
 @@ -0,0 +1,395 @@
@@ -3247,7 +3202,7 @@ index 0000000000000000000000000000000000000000..c002f6372b799f4399815ad30a7891e9
 + */
 diff --git a/unit/test-dbus.h b/unit/test-dbus.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..16f10888e3a517eb64aeb86dae6348dad2b0abb1
+index 00000000..16f10888
 --- /dev/null
 +++ b/unit/test-dbus.h
 @@ -0,0 +1,61 @@
@@ -3314,7 +3269,7 @@ index 0000000000000000000000000000000000000000..16f10888e3a517eb64aeb86dae6348da
 + */
 diff --git a/unit/test-sailfish_access.c b/unit/test-sailfish_access.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..dec71dc4228c2378084e92b06bfc9e10af3d985e
+index 00000000..dec71dc4
 --- /dev/null
 +++ b/unit/test-sailfish_access.c
 @@ -0,0 +1,302 @@

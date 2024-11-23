@@ -1,18 +1,8 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Adam Pigg <adam@piggz.co.uk>
-Date: Sun, 10 Mar 2024 11:24:46 +0000
-Subject: [PATCH 1/1] Add support for debug notifications
-
----
- include/log.h | 10 +++++++---
- src/log.c     |  8 +++++++-
- 2 files changed, 14 insertions(+), 4 deletions(-)
-
 diff --git a/include/log.h b/include/log.h
-index ebfa5403673a0a353df7bb3c9199a06cbdd0afab..4974dd653271c715e792e905fe7ce789bbec7cf8 100644
+index 9d535cfd..38caeed9 100644
 --- a/include/log.h
 +++ b/include/log.h
-@@ -41,13 +41,18 @@ extern void ofono_error(const char *format, ...)
+@@ -27,13 +27,18 @@ extern void ofono_error(const char *format, ...)
  extern void ofono_debug(const char *format, ...)
  				__attribute__((format(printf, 1, 2)));
  
@@ -32,7 +22,7 @@ index ebfa5403673a0a353df7bb3c9199a06cbdd0afab..4974dd653271c715e792e905fe7ce789
  
  /**
   * DBG:
-@@ -58,8 +63,7 @@ struct ofono_debug_desc {
+@@ -44,8 +49,7 @@ struct ofono_debug_desc {
   * name it is called in.
   */
  #define DBG(fmt, arg...) do { \
@@ -43,10 +33,10 @@ index ebfa5403673a0a353df7bb3c9199a06cbdd0afab..4974dd653271c715e792e905fe7ce789
  	}; \
  	if (__ofono_debug_desc.flags & OFONO_DEBUG_FLAG_PRINT) \
 diff --git a/src/log.c b/src/log.c
-index a8b4ef10eaae286b2ace53c8c2d63b127cdb5a70..cc1cbdd1c4e9a6df596cdf376bad9c05f3b115e5 100644
+index a0fb97b3..5f210b3e 100644
 --- a/src/log.c
 +++ b/src/log.c
-@@ -282,7 +282,13 @@ void __ofono_log_enable(struct ofono_debug_desc *start,
+@@ -271,7 +271,13 @@ void __ofono_log_enable(struct ofono_debug_desc *start,
  
  	for (desc = start; desc < stop; desc++) {
  		if (is_enabled(desc) == TRUE)

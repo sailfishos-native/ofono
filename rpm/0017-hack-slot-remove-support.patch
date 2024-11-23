@@ -1,8 +1,8 @@
 diff --git a/Makefile.am b/Makefile.am
-index 090791d9..900cecb8 100644
+index 4e9f9e10..b22ea15f 100644
 --- a/Makefile.am
 +++ b/Makefile.am
-@@ -872,8 +872,8 @@ unit_tests = unit/test-common unit/test-util \
+@@ -875,8 +875,8 @@ unit_tests = unit/test-common unit/test-util \
  				unit/test-rilmodem-cs \
  				unit/test-rilmodem-sms \
  				unit/test-rilmodem-cb \
@@ -14,10 +14,10 @@ index 090791d9..900cecb8 100644
  noinst_PROGRAMS = $(unit_tests) \
  			unit/test-sms-root unit/test-mux unit/test-caif
 diff --git a/plugins/gobi.c b/plugins/gobi.c
-index 8909bf24..88c28cb7 100644
+index ae4ebc1d..07d1f87d 100644
 --- a/plugins/gobi.c
 +++ b/plugins/gobi.c
-@@ -65,6 +65,7 @@ GAtChat *at_util_open_device(struct ofono_modem *modem, const char *key,
+@@ -68,6 +68,7 @@ GAtChat *at_util_open_device(struct ofono_modem *modem, const char *key,
  #define IMEI_LEN	16
  
  static char imei[IMEI_LEN] = "1234567890123456";
@@ -25,7 +25,7 @@ index 8909bf24..88c28cb7 100644
  
  typedef struct ofono_slot_driver_data {
  	struct ofono_slot_manager *slot_manager;
-@@ -1045,10 +1046,9 @@ static void gobi_slot_set_sim_state(struct ofono_sim *sim)
+@@ -1300,10 +1301,9 @@ static void gobi_slot_set_sim_state(struct ofono_sim *sim)
  
  static void gobi_slot_driver_startup_check()
  {
@@ -37,7 +37,7 @@ index 8909bf24..88c28cb7 100644
  		return;
  	}
  
-@@ -1065,9 +1065,8 @@ static void gobi_slot_driver_startup_check()
+@@ -1320,9 +1320,8 @@ static void gobi_slot_driver_startup_check()
  		return;
  	}
  
@@ -49,7 +49,7 @@ index 8909bf24..88c28cb7 100644
  	l_strlcpy(slot->imei, imei, sizeof(slot->imei) );
  
  	slot->handle = ofono_slot_add(global_plugin->slot_manager,
-@@ -1077,7 +1076,7 @@ static void gobi_slot_driver_startup_check()
+@@ -1332,7 +1331,7 @@ static void gobi_slot_driver_startup_check()
  				OFONO_SLOT_NO_FLAGS);
  
  	ofono_slot_driver_started(gobi_ofono_slot_driver);
@@ -58,7 +58,7 @@ index 8909bf24..88c28cb7 100644
  }
  
  static uint gobi_slot_driver_start(GobiPlugin *plugin)
-@@ -1094,8 +1093,25 @@ static void gobi_slot_driver_cancel(GobiPlugin *plugin, uint id)
+@@ -1349,8 +1348,25 @@ static void gobi_slot_driver_cancel(GobiPlugin *plugin, uint id)
  static void gobi_slot_driver_cleanup(GobiPlugin *plugin)
  {
  	DBG("gobi_slot_driver_cleanup");
@@ -85,7 +85,7 @@ index 8909bf24..88c28cb7 100644
  
  static bool gobi_slot_plugin_start(void *user_data)
 diff --git a/src/modem.c b/src/modem.c
-index ea08e1f1..48410eb7 100644
+index 3e868c61..8d1bf7d3 100644
 --- a/src/modem.c
 +++ b/src/modem.c
 @@ -2211,6 +2211,10 @@ void ofono_modem_remove(struct ofono_modem *modem)

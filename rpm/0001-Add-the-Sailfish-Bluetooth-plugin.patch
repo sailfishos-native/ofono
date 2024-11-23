@@ -1,8 +1,8 @@
 diff --git a/Makefile.am b/Makefile.am
-index 9a6f82c3..d32b102d 100644
+index 2d198f52..f5ce0322 100644
 --- a/Makefile.am
 +++ b/Makefile.am
-@@ -590,6 +590,11 @@ builtin_sources += plugins/bluez5.c plugins/bluez5.h
+@@ -600,6 +600,11 @@ builtin_sources += plugins/bluez5.c plugins/bluez5.h
  builtin_modules += hfp_ag_bluez5
  builtin_sources += plugins/hfp_ag_bluez5.c plugins/bluez5.h
  
@@ -15,7 +15,7 @@ index 9a6f82c3..d32b102d 100644
  builtin_modules += upower
  builtin_sources += plugins/upower.c
 diff --git a/configure.ac b/configure.ac
-index 510d2595..ba2856cc 100644
+index a410beb9..a2ffc714 100644
 --- a/configure.ac
 +++ b/configure.ac
 @@ -238,6 +238,11 @@ AC_ARG_ENABLE(bluetooth, AS_HELP_STRING([--disable-bluetooth],
@@ -32,7 +32,7 @@ index 510d2595..ba2856cc 100644
  					[enable_upower=${enableval}])
 diff --git a/plugins/sailfish_bt.c b/plugins/sailfish_bt.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..4f8c15c0ed2cc3a739836efee9c1dea18960578a
+index 00000000..4f8c15c0
 --- /dev/null
 +++ b/plugins/sailfish_bt.c
 @@ -0,0 +1,389 @@

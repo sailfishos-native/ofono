@@ -1,5 +1,5 @@
 diff --git a/src/voicecall.c b/src/voicecall.c
-index b77275fe..e48d5ad3 100644
+index 94576791..6f063705 100644
 --- a/src/voicecall.c
 +++ b/src/voicecall.c
 @@ -113,6 +113,55 @@ static void hangup_all_active(const struct ofono_error *error, void *data);
@@ -58,7 +58,7 @@ index b77275fe..e48d5ad3 100644
  static gint call_compare_by_id(gconstpointer a, gconstpointer b)
  {
  	const struct ofono_call *call = ((struct voicecall *)a)->call;
-@@ -584,6 +633,9 @@ static DBusMessage *voicecall_hangup(DBusConnection *conn,
+@@ -583,6 +632,9 @@ static DBusMessage *voicecall_hangup(DBusConnection *conn,
  			vc->pending = dbus_message_ref(msg);
  			vc->driver->hangup_all(vc, generic_callback, vc);
  
@@ -68,7 +68,7 @@ index b77275fe..e48d5ad3 100644
  			return NULL;
  		}
  
-@@ -592,6 +644,9 @@ static DBusMessage *voicecall_hangup(DBusConnection *conn,
+@@ -591,6 +643,9 @@ static DBusMessage *voicecall_hangup(DBusConnection *conn,
  			vc->pending = dbus_message_ref(msg);
  			vc->driver->hangup_active(vc, generic_callback, vc);
  
@@ -78,7 +78,7 @@ index b77275fe..e48d5ad3 100644
  			return NULL;
  		}
  
-@@ -906,6 +961,9 @@ static void voicecall_set_call_status(struct voicecall *call, int status)
+@@ -905,6 +960,9 @@ static void voicecall_set_call_status(struct voicecall *call, int status)
  
  		if (call->vc->dial_req && call == call->vc->dial_req->call)
  			dial_request_finish(call->vc);
@@ -88,7 +88,7 @@ index b77275fe..e48d5ad3 100644
  	}
  
  	if (status == CALL_STATUS_DISCONNECTED && call->vc->dial_req &&
-@@ -2353,6 +2411,11 @@ void ofono_voicecall_disconnected(struct ofono_voicecall *vc, int id,
+@@ -2352,6 +2410,11 @@ void ofono_voicecall_disconnected(struct ofono_voicecall *vc, int id,
  	voicecall_dbus_unregister(vc, call);
  
  	vc->call_list = g_slist_remove(vc->call_list, call);

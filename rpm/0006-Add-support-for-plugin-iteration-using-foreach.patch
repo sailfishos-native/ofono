@@ -1,18 +1,8 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Adam Pigg <adam@piggz.co.uk>
-Date: Sun, 10 Mar 2024 11:33:25 +0000
-Subject: [PATCH 1/1] Add support for plugin iteration using foreach
-
----
- src/ofono.h      |   6 +
- src/plugin.c     |  19 ++
- 3 files changed, 638 insertions(+)
-
 diff --git a/src/ofono.h b/src/ofono.h
-index 294e90a37c230d31b82e4a60618c0721ab711fe2..97b69f140b174c8fdd59e76edc6d3cd4ce2ab55c 100644
+index 5500b734..81e831b1 100644
 --- a/src/ofono.h
 +++ b/src/ofono.h
-@@ -118,6 +118,12 @@ void __ofono_modules_cleanup(void);
+@@ -106,6 +106,12 @@ void __ofono_modules_cleanup(void);
  int __ofono_plugin_init(const char *pattern, const char *exclude);
  void __ofono_plugin_cleanup(void);
  
@@ -25,12 +15,11 @@ index 294e90a37c230d31b82e4a60618c0721ab711fe2..97b69f140b174c8fdd59e76edc6d3cd4
  #include <ofono/modem.h>
  
  typedef void (*ofono_modem_foreach_func)(struct ofono_modem *modem,
-
 diff --git a/src/plugin.c b/src/plugin.c
-index 924a45ecd2862875cc3e936f2afeebdf1e164964..1dfc081ab6bc7cd03c55bf3be8ce28a5382dde49 100644
+index ad4b4cdc..25961b08 100644
 --- a/src/plugin.c
 +++ b/src/plugin.c
-@@ -99,6 +99,25 @@ static gboolean check_plugin(struct ofono_plugin_desc *desc,
+@@ -85,6 +85,25 @@ static gboolean check_plugin(struct ofono_plugin_desc *desc,
  	return TRUE;
  }
  

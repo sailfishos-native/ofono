@@ -1,8 +1,8 @@
 diff --git a/plugins/gobi.c b/plugins/gobi.c
-index 54b64acb..bfc9c1e8 100644
+index 027aa91d..354c2f3c 100644
 --- a/plugins/gobi.c
 +++ b/plugins/gobi.c
-@@ -38,6 +38,7 @@
+@@ -39,6 +39,7 @@
  #include <ofono/location-reporting.h>
  #include <ofono/log.h>
  #include <ofono/message-waiting.h>
@@ -10,7 +10,7 @@ index 54b64acb..bfc9c1e8 100644
  
  #include <ell/ell.h>
  
-@@ -54,6 +55,28 @@
+@@ -57,6 +58,28 @@
  #define GOBI_UIM	(1 << 5)
  #define GOBI_VOICE	(1 << 6)
  #define GOBI_WDA	(1 << 7)
@@ -38,17 +38,17 @@ index 54b64acb..bfc9c1e8 100644
 +static void gobi_slot_set_sim_state(struct ofono_sim *sim);
  
  #define MAX_CONTEXTS 4
- 
-@@ -76,6 +99,7 @@ struct gobi_data {
- 		struct qmi_service *wds_ipv4;
- 		struct qmi_service *wds_ipv6;
- 	} context_services[MAX_CONTEXTS];
+ #define DEFAULT_MTU 1400
+@@ -95,6 +118,7 @@ struct gobi_data {
+ 	struct rmnet_ifinfo rmnet_interfaces[MAX_CONTEXTS];
+ 	uint8_t n_premux;
+ 	int rmnet_id;
 +	struct ofono_sim   *sim;
  	struct service_request service_requests[8 + MAX_CONTEXTS * 2];
  	int cur_service_request;
  	int num_service_requests;
-@@ -105,6 +129,28 @@ static void gobi_io_debug(const char *str, void *user_data)
- 	ofono_debug("%s%s", prefix, str);
+@@ -190,6 +214,28 @@ static int qmi_wwan_set_pass_through(const char *interface, char value)
+ 	return l_sysctl_set_char(value, QMI_WWAN_PASS_THROUGH, interface);
  }
  
 +/*IMEI CALLBACK*/
@@ -76,7 +76,7 @@ index 54b64acb..bfc9c1e8 100644
  /*
   * Probe the modem.  The following modem properties are expected to be set
   * in order to initialize the driver properly:
-@@ -169,6 +215,11 @@ static int gobi_probe(struct ofono_modem *modem)
+@@ -265,6 +311,11 @@ static int gobi_probe(struct ofono_modem *modem)
  	ofono_modem_set_data(modem, data);
  	ofono_modem_set_capabilities(modem, OFONO_MODEM_CAPABILITY_LTE);
  
@@ -88,7 +88,7 @@ index 54b64acb..bfc9c1e8 100644
  	return 0;
  }
  
-@@ -223,6 +274,8 @@ static void gobi_remove(struct ofono_modem *modem)
+@@ -329,6 +380,8 @@ static void gobi_remove(struct ofono_modem *modem)
  
  	cleanup_services(data);
  
@@ -97,19 +97,18 @@ index 54b64acb..bfc9c1e8 100644
  	qmi_qmux_device_free(data->device);
  
  	l_free(data);
-@@ -431,6 +484,11 @@ static void get_data_format_cb(struct qmi_result *result, void *user_data)
- 	setup_qmi_wwan(data->main_net_name, llproto);
+@@ -509,6 +562,10 @@ static void request_service_cb(struct qmi_service *service, void *user_data)
+ 	if (data->cur_service_request == data->num_service_requests) {
+ 		DBG("All services requested, query DMS Capabilities");
  
- done:
++		/*Get modem IMEI*/
++		qmi_service_send(data->dms, QMI_DMS_GET_IDS, NULL,
++						gobi_get_ids_cb, modem, NULL);
 +
-+	/*Get modem IMEI*/
-+	qmi_service_send(data->dms, QMI_DMS_GET_IDS, NULL,
-+					 gobi_get_ids_cb, modem, NULL);
-+
- 	if (qmi_service_send(data->dms, QMI_DMS_GET_CAPS, NULL,
+ 		if (qmi_service_send(data->dms, QMI_DMS_GET_CAPS, NULL,
  						get_caps_cb, modem, NULL) > 0)
- 		return;
-@@ -788,11 +846,11 @@ static void gobi_pre_sim(struct ofono_modem *modem)
+ 			return;
+@@ -1038,11 +1095,11 @@ static void gobi_pre_sim(struct ofono_modem *modem)
  	ofono_devinfo_create(modem, 0, "qmimodem", qmi_service_clone(data->dms));
  
  	if ((data->features & GOBI_UIM) && !legacy)
@@ -123,7 +122,7 @@ index 54b64acb..bfc9c1e8 100644
  						qmi_service_clone(data->dms));
  
  	if (data->features & GOBI_VOICE)
-@@ -802,6 +860,8 @@ static void gobi_pre_sim(struct ofono_modem *modem)
+@@ -1052,6 +1109,8 @@ static void gobi_pre_sim(struct ofono_modem *modem)
  	if (data->features & GOBI_PDS) /* exclusive use, no need to clone */
  		ofono_location_reporting_create(modem, 0, "qmimodem",
  						l_steal_ptr(data->pds));
@@ -132,7 +131,7 @@ index 54b64acb..bfc9c1e8 100644
  }
  
  static void gobi_setup_gprs(struct ofono_modem *modem)
-@@ -898,6 +958,8 @@ static void gobi_post_sim(struct ofono_modem *modem)
+@@ -1141,6 +1200,8 @@ static void gobi_post_sim(struct ofono_modem *modem)
  
  	if (data->features & GOBI_WDS)
  		gobi_setup_gprs(modem);
@@ -141,7 +140,7 @@ index 54b64acb..bfc9c1e8 100644
  }
  
  static void gobi_post_online(struct ofono_modem *modem)
-@@ -925,6 +987,131 @@ static void gobi_post_online(struct ofono_modem *modem)
+@@ -1168,6 +1229,131 @@ static void gobi_post_online(struct ofono_modem *modem)
  	}
  }
  
